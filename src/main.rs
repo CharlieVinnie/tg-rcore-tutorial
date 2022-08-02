@@ -8,15 +8,14 @@ use sbi_rt::*;
 #[naked]
 #[no_mangle]
 #[link_section = ".text.entry"]
-unsafe extern "C" fn _start(hartid: usize, device_tree_paddr: usize) -> ! {
+unsafe extern "C" fn _start() -> ! {
     const STACK_SIZE: usize = 4096;
 
     #[link_section = ".bss.uninit"]
     static mut STACK: [u8; STACK_SIZE] = [0u8; STACK_SIZE];
 
     core::arch::asm!(
-        "   csrw sie, zero
-            la    sp, {stack}
+        "   la    sp, {stack}
             li    t0, {stack_size}
             add   sp, sp, t0
             j    {main}
