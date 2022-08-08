@@ -3,8 +3,9 @@
 #![feature(naked_functions, asm_sym, asm_const)]
 #![deny(warnings)]
 
-use sbi_rt::*;
-
+/// Supervisor 汇编入口。
+///
+/// 设置栈并跳转到 Rust。
 #[naked]
 #[no_mangle]
 #[link_section = ".text.entry"]
@@ -15,19 +16,23 @@ unsafe extern "C" fn _start() -> ! {
     static mut STACK: [u8; STACK_SIZE] = [0u8; STACK_SIZE];
 
     core::arch::asm!(
-        "   la    sp, {stack}
-            li    t0, {stack_size}
-            add   sp, sp, t0
-            j    {main}
+        "   la  sp, {stack}
+            li  t0, {stack_size}
+            add sp, sp, t0
+            j   {main}
         ",
         stack_size = const STACK_SIZE,
         stack      =   sym STACK,
-        main       =   sym primary_rust_main,
+        main       =   sym rust_main,
         options(noreturn),
     )
 }
 
-extern "C" fn primary_rust_main() -> ! {
+/// 非常简单的 Supervisor 裸机程序。
+///
+/// 打印 `Hello, World!`，然后关机。
+extern "C" fn rust_main() -> ! {
+    use sbi_rt::*;
     for c in b"Hello, world!" {
         #[allow(deprecated)]
         legacy::console_putchar(*c as _);
@@ -36,8 +41,10 @@ extern "C" fn primary_rust_main() -> ! {
     unreachable!()
 }
 
+/// Rust 异常处理函数，以异常方式关机。
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo) -> ! {
+    use sbi_rt::*;
     system_reset(RESET_TYPE_SHUTDOWN, RESET_REASON_SYSTEM_FAILURE);
     unreachable!()
 }
