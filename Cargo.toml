@@ -1,0 +1,13 @@
+[package]
+name = "ch2"
+version = "0.0.1"
+edition = "2021"
+authors = ["YdrMaster <ydrml@hotmail.com>"]
+
+[dependencies]
+sbi-rt = { git = "https://github.com/rustsbi/sbi-rt", branch = "dev" }
+output = { path = "../output" }
+trap-frame = { path = "../trap-frame" }
+syscall = { path = "../syscall", features = ["kernel"] }
+riscv = "0.8.0"
+r0 = "1.0.0"
