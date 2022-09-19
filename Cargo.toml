@@ -18,5 +18,6 @@ kernel-context = { path = "../kernel-context" }
 kernel-vm = { path = "../kernel-vm" }
 buddy-allocator = { git = "https://github.com/YdrMaster/buddy-allocator", rev = "fae1979" }
 syscall = { path = "../syscall", features = ["kernel"] }
+task-manage = { path = "../task-manage"}
 
 easy-fs = { path = "../easy-fs" }

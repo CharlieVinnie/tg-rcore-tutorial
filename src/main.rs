@@ -17,7 +17,7 @@ extern crate alloc;
 
 use crate::{
     impls::{Sv39Manager, SyscallContext},
-    process::Process,
+    process::{Process, TaskId},
 };
 use alloc::vec::Vec;
 use console::log;
@@ -30,7 +30,7 @@ use kernel_vm::{
 use riscv::register::*;
 use sbi_rt::*;
 use spin::Once;
-use syscall::Caller;
+use task_manage::TaskManager;
 use xmas_elf::ElfFile;
 
 // 应用程序内联进来。
@@ -58,8 +58,8 @@ unsafe extern "C" fn _start() -> ! {
     )
 }
 
-static mut PROCESSES: Vec<Process> = Vec::new();
 static mut KERNEL_SPACE: Once<AddressSpace<Sv39, Sv39Manager>> = Once::new();
+static mut TASK_MANAGER: TaskManager<Process, TaskId> = TaskManager::new();
 
 extern "C" fn rust_main() -> ! {
     // bss 段清零
@@ -78,60 +78,66 @@ extern "C" fn rust_main() -> ! {
     mm::test();
     // 建立内核地址空间
     unsafe { KERNEL_SPACE.call_once(kernel_space) };
-    // 加载应用程序
-    extern "C" {
-        static apps: utils::AppMeta;
-    }
-    for (i, elf) in unsafe { apps.iter_elf() }.enumerate() {
-        let base = elf.as_ptr() as usize;
-        log::info!("detect app[{i}]: {base:#x}..{:#x}", base + elf.len());
-        if let Some(process) = Process::new(ElfFile::new(elf).unwrap()) {
-            unsafe { PROCESSES.push(process) };
-        }
-    }
     // 异界传送门
     // 可以直接放在栈上
     let mut portal = ForeignPortal::new();
-    // 传送门映射到所有地址空间
-    unsafe {
-        map_portal(KERNEL_SPACE.get_mut().unwrap(), &portal);
-        PROCESSES
-            .iter_mut()
-            .for_each(|proc| map_portal(&mut proc.address_space, &portal))
-    };
-    const PROTAL_TRANSIT: usize = VPN::<Sv39>::MAX.base().val();
-    while !unsafe { PROCESSES.is_empty() } {
-        let ctx = unsafe { &mut PROCESSES[0].context };
-        unsafe { ctx.execute(&mut portal, PROTAL_TRANSIT) };
-        match scause::read().cause() {
-            scause::Trap::Exception(scause::Exception::UserEnvCall) => {
-                use syscall::{SyscallId as Id, SyscallResult as Ret};
+    let tramp = (
+        PPN::<Sv39>::new(&portal as *const _ as usize >> Sv39::PAGE_BITS),
+        VmFlags::build_from_str("XWRV"),
+    );
 
-                let ctx = &mut ctx.context;
-                let id: Id = ctx.a(7).into();
-                let args = [ctx.a(0), ctx.a(1), ctx.a(2), ctx.a(3), ctx.a(4), ctx.a(5)];
-                match syscall::handle(Caller { entity: 0, flow: 0 }, id, args) {
-                    Ret::Done(ret) => match id {
-                        Id::EXIT => unsafe {
-                            PROCESSES.remove(0);
+    // 加载应用程序
+    // TODO!
+
+    // 传送门映射到所有地址空间
+    unsafe { KERNEL_SPACE.get_mut().unwrap().map_portal(tramp) };
+
+    const PROTAL_TRANSIT: usize = VPN::<Sv39>::MAX.base().val();
+    loop {
+        if let Some(task) = unsafe { TASK_MANAGER.fetch() } {
+            task.execute(&mut portal, PROTAL_TRANSIT);
+            match scause::read().cause() {
+                scause::Trap::Exception(scause::Exception::UserEnvCall) => {
+                    use syscall::{SyscallId as Id, SyscallResult as Ret};
+                    let ctx = &mut task.context.context;
+                    ctx.move_next();
+                    let id: Id = ctx.a(7).into();
+                    let args = [ctx.a(0), ctx.a(1), ctx.a(2), ctx.a(3), ctx.a(4), ctx.a(5)];
+                    match syscall::handle(id, args) {
+                        Ret::Done(ret) => match id {
+                            Id::EXIT => unsafe {
+                                TASK_MANAGER.del(task.pid);
+                            },
+                            _ => {
+                                let ctx =
+                                    unsafe { &mut TASK_MANAGER.current().unwrap().context.context };
+                                *ctx.a_mut(0) = ret as _;
+                                unsafe {
+                                    TASK_MANAGER.add(task.pid);
+                                }
+                            }
                         },
-                        _ => {
-                            *ctx.a_mut(0) = ret as _;
-                            ctx.move_next();
+                        Ret::Unsupported(_) => {
+                            log::info!("id = {id:?}");
+                            unsafe {
+                                TASK_MANAGER.del(task.pid);
+                            }
                         }
-                    },
-                    Ret::Unsupported(_) => {
-                        log::info!("id = {id:?}");
-                        unsafe { PROCESSES.remove(0) };
+                    }
+                }
+                e => {
+                    log::error!("unsupported trap: {e:?}");
+                    unsafe {
+                        TASK_MANAGER.del(task.pid);
                     }
                 }
             }
-            e => {
-                log::error!("unsupported trap: {e:?}");
-                unsafe { PROCESSES.remove(0) };
-            }
+        } else {
+            println!("no task");
+            break;
         }
     }
+
     system_reset(RESET_TYPE_SHUTDOWN, RESET_REASON_NO_REASON);
     unreachable!()
 }
@@ -207,19 +213,9 @@ fn kernel_space() -> AddressSpace<Sv39, Sv39Manager> {
     space
 }
 
-#[inline]
-fn map_portal(space: &mut AddressSpace<Sv39, Sv39Manager>, portal: &ForeignPortal) {
-    const PORTAL: VPN<Sv39> = VPN::MAX; // 虚地址最后一页给传送门
-    space.map_extern(
-        PORTAL..PORTAL + 1,
-        PPN::new(portal as *const _ as usize >> Sv39::PAGE_BITS),
-        VmFlags::build_from_str("XWRV"),
-    );
-}
-
 /// 各种接口库的实现。
 mod impls {
-    use crate::{mm::PAGE, PROCESSES};
+    use crate::{mm::PAGE, process::TaskId, TASK_MANAGER};
     use alloc::alloc::handle_alloc_error;
     use console::log;
     use core::{alloc::Layout, num::NonZeroUsize, ptr::NonNull};
@@ -228,6 +224,7 @@ mod impls {
         PageManager,
     };
     use syscall::*;
+    use xmas_elf::ElfFile;
 
     #[repr(transparent)]
     pub struct Sv39Manager(NonNull<Pte<Sv39>>);
@@ -315,12 +312,11 @@ mod impls {
 
     impl IO for SyscallContext {
         #[inline]
-        fn write(&self, caller: Caller, fd: usize, buf: usize, count: usize) -> isize {
+        fn write(&self, fd: usize, buf: usize, count: usize) -> isize {
             const READABLE: VmFlags<Sv39> = VmFlags::build_from_str("RV");
 
             if fd == 0 {
-                if let Some(ptr) = unsafe { PROCESSES.get_mut(caller.entity) }
-                    .unwrap()
+                if let Some(ptr) = unsafe { TASK_MANAGER.current().unwrap() }
                     .address_space
                     .translate(VAddr::new(buf), READABLE)
                 {
@@ -341,41 +337,132 @@ mod impls {
             }
         }
 
-        fn read(&self, caller: Caller, fd: usize, buf: usize, count: usize) -> isize {
+        fn read(&self, fd: usize, buf: usize, count: usize) -> isize {
+            const WRITEABLE: VmFlags<Sv39> = VmFlags::build_from_str("W_V");
+            if fd == 1 {
+                if let Some(mut ptr) = unsafe { TASK_MANAGER.current().unwrap() }
+                    .address_space
+                    .translate(VAddr::new(buf), WRITEABLE)
+                {
+                    let mut ptr = unsafe { ptr.as_mut() } as *mut u8;
+                    for _ in 0..count {
+                        let c = sbi_rt::legacy::console_getchar() as u8;
+                        unsafe {
+                            *ptr = c;
+                            ptr = ptr.add(1);
+                        }
+                    }
+                    count as _
+                } else {
+                    log::error!("ptr not writeable");
+                    -1
+                }
+            } else {
+                log::error!("unsupported fd: {fd}");
+                -1
+            }
+        }
+
+        fn open(&self, path: usize, flags: usize) -> isize {
             -1
         }
 
-        fn open(&self, caller: Caller, path: usize, flags: usize) -> isize {
-            -1
-        }
-
-        fn close(&self, caller: Caller, fd: usize) -> isize {
+        fn close(&self, fd: usize) -> isize {
             -1
         }
     }
 
     impl Process for SyscallContext {
         #[inline]
-        fn exit(&self, _caller: Caller, _status: usize) -> isize {
+        fn exit(&self, _status: usize) -> isize {
+            let current = unsafe { TASK_MANAGER.current().unwrap() };
+            if let Some(parent) = unsafe { TASK_MANAGER.get_task(current.parent) } {
+                let pair = parent
+                    .children
+                    .iter()
+                    .enumerate()
+                    .find(|(_, &id)| id == current.pid);
+                if let Some((idx, _)) = pair {
+                    parent.children.remove(idx);
+                    // log::debug!("parent remove child {}", parent.children.remove(idx));
+                }
+                for (_, &id) in current.children.iter().enumerate() {
+                    // log::warn!("parent insert child {}", id);
+                    parent.children.push(id);
+                }
+            }
             0
+        }
+
+        fn fork(&self) -> isize {
+            let current = unsafe { TASK_MANAGER.current().unwrap() };
+            let mut child_proc = current.fork().unwrap();
+            let pid = child_proc.pid;
+            let context = &mut child_proc.context.context;
+            *context.a_mut(0) = 0 as _;
+            unsafe {
+                TASK_MANAGER.insert(pid, child_proc);
+            }
+            pid.get_val() as isize
+        }
+
+        fn exec(&self, path: usize, count: usize) -> isize {
+            const READABLE: VmFlags<Sv39> = VmFlags::build_from_str("RV");
+            let current = unsafe { TASK_MANAGER.current().unwrap() };
+            if let Some(ptr) = current.address_space.translate(VAddr::new(path), READABLE) {
+                let name = unsafe {
+                    core::str::from_utf8_unchecked(core::slice::from_raw_parts(ptr.as_ptr(), count))
+                };
+                // let data = ElfFile::new(get_app_data(name).unwrap()).unwrap();
+                // current.exec(data);
+                0
+            } else {
+                -1
+            }
+        }
+
+        // 简化的 wait 系统调用，pid == -1，则需要等待所有子进程结束，若当前进程有子进程，则返回 -1，否则返回 0
+        // pid 为具体的某个值，表示需要等待某个子进程结束，因此只需要在 TASK_MANAGER 中查找是否有任务
+        // 简化了进程的状态模型
+        fn wait(&self, pid: isize, exit_code_ptr: usize) -> isize {
+            let current = unsafe { TASK_MANAGER.current().unwrap() };
+            const WRITABLE: VmFlags<Sv39> = VmFlags::build_from_str("W_V");
+            if let Some(mut ptr) = current
+                .address_space
+                .translate(VAddr::new(exit_code_ptr), WRITABLE)
+            {
+                unsafe { *ptr.as_mut() = 333 as i32 };
+            }
+            if pid == -1 {
+                if current.children.is_empty() {
+                    return 0;
+                } else {
+                    return -1;
+                }
+            } else {
+                if unsafe { TASK_MANAGER.get_task(TaskId::from(pid as usize)).is_none() } {
+                    return pid;
+                } else {
+                    return -1;
+                }
+            }
         }
     }
 
     impl Scheduling for SyscallContext {
         #[inline]
-        fn sched_yield(&self, _caller: Caller) -> isize {
+        fn sched_yield(&self) -> isize {
             0
         }
     }
 
     impl Clock for SyscallContext {
         #[inline]
-        fn clock_gettime(&self, caller: Caller, clock_id: ClockId, tp: usize) -> isize {
+        fn clock_gettime(&self, clock_id: ClockId, tp: usize) -> isize {
             const WRITABLE: VmFlags<Sv39> = VmFlags::build_from_str("W_V");
             match clock_id {
                 ClockId::CLOCK_MONOTONIC => {
-                    if let Some(mut ptr) = unsafe { PROCESSES.get(caller.entity) }
-                        .unwrap()
+                    if let Some(mut ptr) = unsafe { TASK_MANAGER.current().unwrap() }
                         .address_space
                         .translate(VAddr::new(tp), WRITABLE)
                     {
