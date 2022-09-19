@@ -2,7 +2,7 @@
 #![no_main]
 #![feature(naked_functions, asm_sym, asm_const, const_btree_new)]
 #![feature(default_alloc_error_handler)]
-#![deny(warnings)]
+// #![deny(warnings)]
 #![allow(deprecated)]
 
 mod mm;
@@ -344,6 +344,16 @@ mod impls {
                 log::error!("unsupported fd: {fd}");
                 -1
             }
+        }
+        
+        #[inline]
+        fn open(&self, path: usize, flags: usize) -> isize {
+            -1
+        }
+
+        #[inline]
+        fn close(&self, fd: usize) -> isize {
+            -1
         }
     }
 
