@@ -4,7 +4,6 @@
 #![feature(default_alloc_error_handler)]
 // #![deny(warnings)]
 
-mod exit_process;
 mod fs;
 mod process;
 mod processor;
@@ -25,7 +24,6 @@ use crate::{
 use alloc::alloc::alloc;
 use core::{alloc::Layout, mem::MaybeUninit};
 use easy_fs::{FSManager, OpenFlags};
-use exit_process::exit_process;
 use impls::Console;
 use kernel_context::foreign::MultislotPortal;
 use kernel_vm::{
@@ -34,6 +32,7 @@ use kernel_vm::{
 };
 pub use processor::PROCESSOR;
 use rcore_console::log;
+use rcore_task_manage::ProcId;
 use riscv::register::*;
 use sbi_rt::*;
 use signal::SignalResult;
@@ -41,9 +40,9 @@ use syscall::Caller;
 use xmas_elf::ElfFile;
 
 // 定义内核入口。
-linker::boot0!(rust_main; stack = 16 * 4096);
+linker::boot0!(rust_main; stack = 32 * 4096);
 // 物理内存容量 = 16 MiB。
-const MEMORY: usize = 16 << 20;
+const MEMORY: usize = 48 << 20;
 // 传送门所在虚页。
 const PROTAL_TRANSIT: VPN<Sv39> = VPN::MAX;
 // 内核地址空间。
@@ -84,7 +83,7 @@ extern "C" fn rust_main() -> ! {
     if let Some(process) = Process::from_elf(ElfFile::new(initproc.as_slice()).unwrap()) {
         unsafe {
             PROCESSOR.set_manager(ProcManager::new());
-            PROCESSOR.add(process.pid, process);
+            PROCESSOR.add(process.pid, process, ProcId::from_usize(usize::MAX));
         }
     }
     loop {
@@ -107,13 +106,12 @@ extern "C" fn rust_main() -> ! {
                     // 当然这样可能代码上不够优雅。处理信号的具体时机还需要后续再讨论。
                     match task.signal.handle_signals(ctx) {
                         // 进程应该结束执行
-                        SignalResult::ProcessKilled(_exit_code) => {
-                            exit_process();
-                            unsafe { PROCESSOR.make_current_exited() }
-                        }
+                        SignalResult::ProcessKilled(exit_code) => unsafe {
+                            PROCESSOR.make_current_exited(exit_code as _)
+                        },
                         _ => match syscall_ret {
                             Ret::Done(ret) => match id {
-                                Id::EXIT => unsafe { PROCESSOR.make_current_exited() },
+                                Id::EXIT => unsafe { PROCESSOR.make_current_exited(ret) },
                                 _ => {
                                     let ctx = &mut task.context.context;
                                     *ctx.a_mut(0) = ret as _;
@@ -122,14 +120,14 @@ extern "C" fn rust_main() -> ! {
                             },
                             Ret::Unsupported(_) => {
                                 log::info!("id = {id:?}");
-                                unsafe { PROCESSOR.make_current_exited() };
+                                unsafe { PROCESSOR.make_current_exited(-2) };
                             }
                         },
                     }
                 }
                 e => {
                     log::error!("unsupported trap: {e:?}");
-                    unsafe { PROCESSOR.make_current_exited() };
+                    unsafe { PROCESSOR.make_current_exited(-3) };
                 }
             }
         } else {
@@ -212,9 +210,7 @@ fn map_portal(space: &AddressSpace<Sv39, Sv39Manager>) {
 /// 各种接口库的实现。
 mod impls {
     use crate::{
-        exit_process,
         fs::{read_all, FS},
-        process::TaskId,
         PROCESSOR,
     };
     use alloc::{alloc::alloc_zeroed, string::String, vec::Vec};
@@ -226,6 +222,7 @@ mod impls {
         PageManager,
     };
     use rcore_console::log;
+    use rcore_task_manage::ProcId;
     use signal::SignalNo;
     use spin::Mutex;
     use syscall::*;
@@ -419,8 +416,8 @@ mod impls {
 
     impl Process for SyscallContext {
         #[inline]
-        fn exit(&self, _caller: Caller, _status: usize) -> isize {
-            exit_process()
+        fn exit(&self, _caller: Caller, exit_code: usize) -> isize {
+            exit_code as isize
         }
 
         fn fork(&self, _caller: Caller) -> isize {
@@ -430,9 +427,9 @@ mod impls {
             let context = &mut child_proc.context.context;
             *context.a_mut(0) = 0 as _;
             unsafe {
-                PROCESSOR.add(pid, child_proc);
+                PROCESSOR.add(pid, child_proc, current.pid);
             }
-            pid.get_val() as isize
+            pid.get_usize() as isize
         }
 
         fn exec(&self, _caller: Caller, path: usize, count: usize) -> isize {
@@ -462,36 +459,28 @@ mod impls {
                 )
         }
 
-        // 简化的 wait 系统调用，pid == -1，则需要等待所有子进程结束，若当前进程有子进程，则返回 -1，否则返回 0
-        // pid 为具体的某个值，表示需要等待某个子进程结束，因此只需要在 TASK_MANAGER 中查找是否有任务
-        // 简化了进程的状态模型
         fn wait(&self, _caller: Caller, pid: isize, exit_code_ptr: usize) -> isize {
             let current = unsafe { PROCESSOR.current().unwrap() };
             const WRITABLE: VmFlags<Sv39> = VmFlags::build_from_str("W_V");
-            if let Some(mut ptr) = current
-                .address_space
-                .translate(VAddr::new(exit_code_ptr), WRITABLE)
+            if let Some((dead_pid, exit_code)) =
+                unsafe { PROCESSOR.wait(ProcId::from_usize(pid as usize)) }
             {
-                unsafe { *ptr.as_mut() = 333 as i32 };
-            }
-            if pid == -1 {
-                if current.children.is_empty() {
-                    return 0;
-                } else {
-                    return -1;
+                if let Some(mut ptr) = current
+                    .address_space
+                    .translate(VAddr::new(exit_code_ptr), WRITABLE)
+                {
+                    unsafe { *ptr.as_mut() = exit_code };
                 }
+                return dead_pid.get_usize() as _;
             } else {
-                if unsafe { PROCESSOR.get_task(TaskId::from(pid as usize)).is_none() } {
-                    return pid;
-                } else {
-                    return -1;
-                }
+                // 等待的子进程不存在
+                return -1;
             }
         }
 
         fn getpid(&self, _caller: Caller) -> isize {
             let current = unsafe { PROCESSOR.current().unwrap() };
-            current.pid.get_val() as _
+            current.pid.get_usize() as _
         }
     }
 
@@ -530,7 +519,9 @@ mod impls {
 
     impl Signal for SyscallContext {
         fn kill(&self, _caller: Caller, pid: isize, signum: u8) -> isize {
-            if let Some(target_task) = unsafe { PROCESSOR.get_task(TaskId::from(pid as usize)) } {
+            if let Some(target_task) =
+                unsafe { PROCESSOR.get_task(ProcId::from_usize(pid as usize)) }
+            {
                 if let Ok(signal_no) = SignalNo::try_from(signum) {
                     if signal_no != SignalNo::ERR {
                         target_task.signal.add_signal(signal_no);
