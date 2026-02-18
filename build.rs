@@ -3,7 +3,6 @@ use std::{collections::HashMap, env, fs, path::PathBuf, process::Command};
 use tg_easy_fs::{BlockDevice, EasyFileSystem};
 
 const TARGET_ARCH: &str = "riscv64gc-unknown-none-elf";
-const TG_USER_VERSION: &str = "0.2.0-preview.1";
 const BLOCK_SZ: usize = 512;
 
 #[derive(Deserialize, Default)]
@@ -18,6 +17,8 @@ fn main() {
     println!("cargo:rerun-if-env-changed=LOG");
     println!("cargo:rerun-if-env-changed=TG_USER_DIR");
     println!("cargo:rerun-if-env-changed=TG_USER_VERSION");
+    println!("cargo:rerun-if-env-changed=TG_USER_CRATE");
+    println!("cargo:rerun-if-env-changed=TG_USER_LOCAL_DIR");
     println!("cargo:rerun-if-env-changed=TG_SKIP_USER_APPS");
 
     let target_arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
@@ -189,6 +190,7 @@ fn easy_fs_pack(
 }
 
 fn ensure_tg_user() -> PathBuf {
+    // 优先使用 TG_USER_DIR 显式指定的目录
     if let Ok(dir) = env::var("TG_USER_DIR") {
         let path = PathBuf::from(dir);
         if path.join("Cargo.toml").exists() {
@@ -196,14 +198,25 @@ fn ensure_tg_user() -> PathBuf {
         }
     }
 
+    // 从 .cargo/config.toml [env] 读取三个配置项
+    let crate_name = env::var("TG_USER_CRATE")
+        .expect("TG_USER_CRATE not set; add it to .cargo/config.toml [env]");
+    let local_dir_name = env::var("TG_USER_LOCAL_DIR")
+        .expect("TG_USER_LOCAL_DIR not set; add it to .cargo/config.toml [env]");
+    let version = env::var("TG_USER_VERSION")
+        .expect("TG_USER_VERSION not set; add it to .cargo/config.toml [env]");
+
     let manifest_dir = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
-    let tg_user_dir = manifest_dir.join("tg-user");
+    let tg_user_dir = manifest_dir.join(&local_dir_name);
+
+    // 本地缓存目录已存在则直接使用
     if tg_user_dir.join("Cargo.toml").exists() {
+        ensure_workspace_table(&tg_user_dir);
         return tg_user_dir;
     }
 
-    let version = env::var("TG_USER_VERSION").unwrap_or_else(|_| TG_USER_VERSION.to_string());
-    let crate_spec = format!("tg-user@{version}");
+    // 从 crates.io 克隆指定包
+    let crate_spec = format!("{crate_name}@{version}");
     let status = Command::new("cargo")
         .args([
             "clone",
@@ -212,22 +225,37 @@ fn ensure_tg_user() -> PathBuf {
             tg_user_dir.to_string_lossy().as_ref(),
         ])
         .status()
-        .expect("failed to execute cargo clone tg-user");
+        .unwrap_or_else(|e| panic!("failed to execute cargo clone {crate_spec}: {e}"));
 
     if !status.success() {
         panic!(
-            "failed to clone tg-user into {}; ensure cargo-clone is installed or set TG_USER_DIR",
+            "failed to clone {crate_spec} into {}; ensure cargo-clone is installed or set TG_USER_DIR",
             tg_user_dir.display()
         );
     }
 
     if !tg_user_dir.join("Cargo.toml").exists() {
         panic!(
-            "tg-user clone did not create a valid crate at {}; ensure tg-user {} exists on crates.io or set TG_USER_DIR",
-            tg_user_dir.display(),
-            version
+            "{crate_spec} clone did not produce a valid crate at {}",
+            tg_user_dir.display()
         );
     }
 
+    // 克隆后补加 [workspace]，防止父 workspace 将其识别为非成员而报错
+    ensure_workspace_table(&tg_user_dir);
+
     tg_user_dir
+}
+
+/// 若 Cargo.toml 末尾尚无 [workspace] 表，则追加一个空的，
+/// 使该 crate 成为独立 workspace 根，避免父 workspace 冲突。
+fn ensure_workspace_table(dir: &PathBuf) {
+    let cargo_toml = dir.join("Cargo.toml");
+    let content = fs::read_to_string(&cargo_toml).unwrap_or_default();
+    if !content.contains("[workspace]") {
+        fs::write(&cargo_toml, format!("{}
+[workspace]
+", content))
+            .unwrap_or_else(|err| panic!("failed to patch Cargo.toml in {}: {}", dir.display(), err));
+    }
 }
