@@ -1,5 +1,5 @@
 [package]
-name = "tg-kernel-vm"
+name = "tg-rcore-tutorial-kernel-vm"
 description = "Kernel virtual memory management for rCore tutorial OS."
 version = "0.4.2-preview.1"
 edition = "2024"
