@@ -1,5 +1,5 @@
 [package]
-name = "tg-ch2"
+name = "tg-rcore-tutorial-ch2"
 description = "Chapter 2 of rCore Tutorial: Batch processing system with privilege levels and trap handling."
 version = "0.4.2-preview.1"
 edition = "2024"
@@ -25,13 +25,13 @@ panic = "abort"
 [dependencies]
 riscv = "0.10.1"
 
-tg-sbi = { version = "0.4.2-preview.1", features = ["nobios"] }
-tg-linker = { version = "0.4.2-preview.1" }
-tg-console = { version = "0.4.2-preview.1" }
-tg-kernel-context = { version = "0.4.2-preview.1" }
-tg-syscall = { version = "0.4.2-preview.1", features = ["kernel"] }
+tg-sbi = { package = "tg-rcore-tutorial-sbi", version = "0.4.2-preview.1", features = ["nobios"] }
+tg-linker = { package = "tg-rcore-tutorial-linker", version = "0.4.2-preview.1" }
+tg-console = {  package = "tg-rcore-tutorial-console", version = "0.4.2-preview.1" }
+tg-kernel-context = { package = "tg-rcore-tutorial-kernel-context", version = "0.4.2-preview.1" }
+tg-syscall = { package = "tg-rcore-tutorial-syscall", version = "0.4.2-preview.1", features = ["kernel"] }
 
 [build-dependencies]
-tg-linker = { version = "0.4.2-preview.1" }
+tg-linker = { package = "tg-rcore-tutorial-linker", version = "0.4.2-preview.1" }
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
