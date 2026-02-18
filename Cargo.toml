@@ -1,5 +1,5 @@
 [package]
-name = "tg-user"
+name = "tg-rcore-tutorial-user"
 description = "User-space apps for rCore Tutorial chapters (subset for ch2)."
 version = "0.4.2-preview.1"
 edition = "2024"
