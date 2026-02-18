@@ -1,5 +1,5 @@
 [package]
-name = "tg-sync"
+name = "tg-rcore-tutorial-sync"
 description = "Synchronization primitives for rCore tutorial OS, including mutex, semaphore, and condvar."
 version = "0.4.2-preview.1"
 edition = "2024"
@@ -15,4 +15,4 @@ categories = ["no-std", "embedded", "concurrency"]
 [dependencies]
 riscv = "0.10"
 spin = "0.9"
-tg-task-manage = { path = "../tg-task-manage", version = "0.4.2-preview.1" }
+tg-task-manage = { package = "tg-rcore-tutorial-task-manage", path = "../tg-task-manage", version = "0.4.2-preview.1" }
