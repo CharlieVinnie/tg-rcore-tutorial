@@ -1,5 +1,5 @@
 [package]
-name = "tg-kernel-alloc"
+name = "tg-rcore-tutorial-kernel-alloc"
 description = "Kernel memory allocator for rCore tutorial OS using buddy allocation."
 version = "0.4.2-preview.1"
 edition = "2024"
