@@ -1,5 +1,5 @@
 [package]
-name = "tg-sbi"
+name = "tg-rcore-tutorial-sbi"
 description = "SBI (Supervisor Binary Interface) call wrappers for rCore tutorial OS."
 version = "0.4.2-preview.1"
 edition = "2024"
