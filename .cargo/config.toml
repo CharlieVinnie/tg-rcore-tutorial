@@ -24,3 +24,12 @@ runner = [
     "virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0",
     "-kernel",
 ]
+
+# tg-user 用户态库的配置，由 build.rs 读取
+# TG_USER_CRATE   : cargo clone 时使用的 crates.io 包名
+# TG_USER_LOCAL_DIR: 本地缓存目录名（位于 chN/ 下）
+# TG_USER_VERSION : 目标版本号
+[env]
+TG_USER_CRATE     = "tg-rcore-tutorial-user"
+TG_USER_LOCAL_DIR = "tg-user"
+TG_USER_VERSION   = "0.4.2-preview.3"
