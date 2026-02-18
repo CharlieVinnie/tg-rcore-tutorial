@@ -1,5 +1,5 @@
 [package]
-name = "tg-linker"
+name = "tg-rcore-tutorial-linker"
 description = "Linker script generation utilities for rCore tutorial OS kernel."
 version = "0.4.2-preview.1"
 edition = "2024"
