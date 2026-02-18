@@ -1,5 +1,5 @@
 [package]
-name = "tg-task-manage"
+name = "tg-rcore-tutorial-task-manage"
 description = "Task and process management for rCore tutorial OS, including scheduling and relationships."
 version = "0.4.2-preview.1"
 edition = "2024"
