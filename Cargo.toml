@@ -1,5 +1,5 @@
 [package]
-name = "tg-syscall"
+name = "tg-rcore-tutorial-syscall"
 description = "System call definitions and interfaces for rCore tutorial OS."
 version = "0.4.2-preview.1"
 edition = "2024"
