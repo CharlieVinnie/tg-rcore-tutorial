@@ -1,5 +1,5 @@
 [package]
-name = "tg-ch1"
+name = "tg-rcore-tutorial-ch1"
 description = "Chapter 1 of rCore Tutorial: A minimal bare-metal application running in RISC-V S-mode."
 version = "0.4.2-preview.1"
 edition = "2024"
@@ -19,4 +19,4 @@ panic = "abort"
 panic = "abort"
 
 [dependencies]
-tg-sbi = { version = "0.4.2-preview.1", features = ["nobios"] }
+tg-sbi = { package = "tg-rcore-tutorial-sbi", version = "0.4.2-preview.1", features = ["nobios"] }
