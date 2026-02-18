@@ -1,5 +1,5 @@
 [package]
-name = "tg-signal-defs"
+name = "tg-rcore-tutorial-signal-defs"
 description = "Signal definitions for rCore tutorial OS."
 version = "0.4.2-preview.1"
 edition = "2024"
