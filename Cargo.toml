@@ -1,5 +1,5 @@
 [package]
-name = "tg-ch4"
+name = "tg-rcore-tutorial-ch4"
 description = "Chapter 4 of rCore Tutorial: Address space management with SV39 virtual memory."
 version = "0.4.2-preview.1"
 edition = "2024"
@@ -29,15 +29,15 @@ panic = "abort"
 xmas-elf = "0.8.0"
 riscv = "0.10.1"
 
-tg-sbi = { version = "0.4.2-preview.1", features = ["nobios"] }
-tg-linker = { version = "0.4.2-preview.1" }
-tg-console = { version = "0.4.2-preview.1" }
-tg-kernel-context = { version = "0.4.2-preview.1", features = ["foreign"] }
-tg-kernel-alloc = { version = "0.4.2-preview.1" }
-tg-kernel-vm = { version = "0.4.2-preview.1" }
-tg-syscall = { version = "0.4.2-preview.1", features = ["kernel"] }
+tg-sbi = { package = "tg-rcore-tutorial-sbi", path = "../tg-sbi", version = "0.4.2-preview.1", features = ["nobios"] }
+tg-linker = { package = "tg-rcore-tutorial-linker", path = "../tg-linker", version = "0.4.2-preview.1" }
+tg-console = { package = "tg-rcore-tutorial-console", path = "../tg-console", version = "0.4.2-preview.1" }
+tg-kernel-context = { package = "tg-rcore-tutorial-kernel-context", path = "../tg-kernel-context", version = "0.4.2-preview.1", features = ["foreign"] }
+tg-kernel-alloc = { package = "tg-rcore-tutorial-kernel-alloc", path = "../tg-kernel-alloc", version = "0.4.2-preview.1" }
+tg-kernel-vm = { package = "tg-rcore-tutorial-kernel-vm", path = "../tg-kernel-vm", version = "0.4.2-preview.1" }
+tg-syscall = { package = "tg-rcore-tutorial-syscall", path = "../tg-syscall", version = "0.4.2-preview.1", features = ["kernel"] }
 
 [build-dependencies]
-tg-linker = { version = "0.4.2-preview.1" }
+tg-linker = { package = "tg-rcore-tutorial-linker", path = "../tg-linker", version = "0.4.2-preview.1" }
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
