@@ -1,1 +1,1 @@
-"tg-rcore-tutorial-sbi" "../.."
+"tg-rcore-tutorial-kernel-vm" "../.."
