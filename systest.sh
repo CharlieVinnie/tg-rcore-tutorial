@@ -49,7 +49,12 @@ show_help() {
   tg-rcore-tutorial-ch8
 
 配置文件:
-  systest.txt  定义测试配置，格式为： "crate名称" "测试命令" "期望输出"
+  systest.txt   定义测试配置，格式为："crate名称" "测试命令" "期望输出"
+  sysdeps.txt   定义本地依赖配置（配合 -l 使用），格式为："依赖包名" "相对路径"
+
+示例 sysdeps.txt:
+  "tg-rcore-tutorial-sbi" "../.."
+  "tg-rcore-tutorial-syscall" "../../tg-rcore-tutorial-syscall"
 EOF
     exit 0
 }
@@ -203,87 +208,119 @@ done
 echo ""
 
 # ------------------------------------------------
-# 阶段2：patch Cargo.toml，使用本地 SBI（仅当 -l 参数时执行）
+# 阶段2：patch Cargo.toml，使用本地依赖（仅当 -l 参数时执行）
 # ------------------------------------------------
 if [[ ${USE_LOCAL_SBI} -eq 1 ]]; then
-    echo "========================================"
-    echo "阶段2：patch Cargo.toml 使用本地 SBI"
-    echo "========================================"
+    SYSDEPS_TXT="${SCRIPT_DIR}/sysdeps.txt"
 
-# 从 systest/<crate>/ 到 tg-rcore-tutorial-sbi/ 的相对路径
-SBI_REL_PATH="../.."
+    if [[ ! -f "${SYSDEPS_TXT}" ]]; then
+        echo -e "${YELLOW}[警告]${NC} 找不到 ${SYSDEPS_TXT}，跳过本地依赖替换"
+    else
+        echo "========================================"
+        echo "阶段2：patch Cargo.toml 使用本地依赖"
+        echo "========================================"
 
-for CRATE in "${CRATE_NAMES[@]}"; do
-    TARGET_DIR="${SYSTEST_DIR}/${CRATE}"
-    CARGO_TOML="${TARGET_DIR}/Cargo.toml"
+        # 读取 sysdeps.txt 到数组
+        declare -a DEP_NAMES=()
+        declare -a DEP_PATHS=()
+        while IFS= read -r line || [[ -n "$line" ]]; do
+            [[ -z "$line" || "$line" == \#* ]] && continue
+            # 提取双引号包围的两个字段
+            fields=()
+            temp="$line"
+            while [[ "$temp" =~ \"([^\"]*)\" ]]; do
+                fields+=("${BASH_REMATCH[1]}")
+                temp="${temp#*\"}"
+                temp="${temp#*\"}"
+            done
+            if [[ ${#fields[@]} -ge 2 ]]; then
+                DEP_NAMES+=("${fields[0]}")
+                DEP_PATHS+=("${fields[1]}")
+            fi
+        done < "${SYSDEPS_TXT}"
 
-    if [[ ! -f "${CARGO_TOML}" ]]; then
-        echo "  [警告] ${CRATE}/Cargo.toml 不存在，跳过"
-        continue
-    fi
+        echo "  本地依赖配置 (${#DEP_NAMES[@]} 个):"
+        for i in "${!DEP_NAMES[@]}"; do
+            echo "    - ${DEP_NAMES[$i]} → ${DEP_PATHS[$i]}"
+        done
+        echo ""
 
-    if ! grep -q 'tg-rcore-tutorial-sbi' "${CARGO_TOML}"; then
-        echo "  [跳过] ${CRATE}/Cargo.toml 中未找到 tg-rcore-tutorial-sbi 依赖"
-        continue
-    fi
+        for CRATE in "${CRATE_NAMES[@]}"; do
+            TARGET_DIR="${SYSTEST_DIR}/${CRATE}"
+            CARGO_TOML="${TARGET_DIR}/Cargo.toml"
 
-    echo "  [patch] ${CRATE}/Cargo.toml → path = \"${SBI_REL_PATH}\""
-    cp "${CARGO_TOML}" "${CARGO_TOML}.bak"
+            if [[ ! -f "${CARGO_TOML}" ]]; then
+                echo "  [警告] ${CRATE}/Cargo.toml 不存在，跳过"
+                continue
+            fi
 
-    python3 - <<PYEOF
+            echo "  [patch] ${CRATE}/Cargo.toml"
+            cp "${CARGO_TOML}" "${CARGO_TOML}.bak"
+
+            # 构建 Python 代码中的依赖列表
+            DEP_LIST="["
+            for i in "${!DEP_NAMES[@]}"; do
+                if [[ $i -gt 0 ]]; then DEP_LIST+=","; fi
+                DEP_LIST+="('${DEP_NAMES[$i]}', '${DEP_PATHS[$i]}')"
+            done
+            DEP_LIST+="]"
+
+            python3 - <<PYEOF
 import re
 
 cargo_toml = '${CARGO_TOML}'
-rel_path   = '${SBI_REL_PATH}'
+dep_list = ${DEP_LIST}
 
 with open(cargo_toml, 'r') as f:
     content = f.read()
 
-# 格式1: tg-rcore-tutorial-sbi = "x.y.z"
-content = re.sub(
-    r'^(tg-rcore-tutorial-sbi\s*=\s*)"[^"]*"',
-    r'\1{ path = "' + rel_path + r'" }',
-    content, flags=re.MULTILINE
-)
+for pkg_name, rel_path in dep_list:
+    # 格式1: pkg_name = "x.y.z"
+    content = re.sub(
+        r'^(' + re.escape(pkg_name) + r'\s*=\s*)"[^"]*"',
+        r'\1{ path = "' + rel_path + r'" }',
+        content, flags=re.MULTILINE
+    )
 
-# 格式2: tg-rcore-tutorial-sbi = { version = "x.y.z", ... }
-def replace_table(m):
-    prefix = m.group(1)
-    inner  = m.group(2)
-    inner  = re.sub(r'\bversion\s*=\s*"[^"]*",?\s*', '', inner)
-    inner  = inner.strip().rstrip(',').strip()
-    body   = ('path = "' + rel_path + '", ' + inner) if inner else ('path = "' + rel_path + '"')
-    return prefix + '{ ' + body + ' }'
+    # 格式2: pkg_name = { version = "x.y.z", ... }
+    def make_replace_table(path):
+        def replace_table(m):
+            prefix = m.group(1)
+            inner  = m.group(2)
+            inner  = re.sub(r'\bversion\s*=\s*"[^"]*",?\s*', '', inner)
+            inner  = inner.strip().rstrip(',').strip()
+            body   = ('path = "' + path + '", ' + inner) if inner else ('path = "' + path + '"')
+            return prefix + '{ ' + body + ' }'
+        return replace_table
 
-content = re.sub(
-    r'^(tg-rcore-tutorial-sbi\s*=\s*)\{([^}]*)\}',
-    replace_table, content, flags=re.MULTILINE
-)
+    content = re.sub(
+        r'^(' + re.escape(pkg_name) + r'\s*=\s*)\{([^}]*)\}',
+        make_replace_table(rel_path), content, flags=re.MULTILINE
+    )
 
-# 格式3: [dependencies.xxx] 表格格式，包含 package = "tg-rcore-tutorial-sbi"
-# 匹配 [dependencies.xxx] 到下一个以 [ 开头的行或文件结尾之间的内容
-def replace_dep_table(m):
-    header = m.group(1)  # [dependencies.xxx]\n
-    body = m.group(2)    # 该块的内容
-    # 检查是否包含 package = "tg-rcore-tutorial-sbi"
-    if 'package = "tg-rcore-tutorial-sbi"' in body:
-        # 移除 version 行
-        body = re.sub(r'^version\s*=\s*"[^"]*"\s*\n', '', body, flags=re.MULTILINE)
-        # 在开头添加 path 行
-        return header + 'path = "' + rel_path + '"\n' + body
-    return m.group(0)
+    # 格式3: [dependencies.xxx] 表格格式，包含 package = "pkg_name"
+    def make_replace_dep_table(path, name):
+        def replace_dep_table(m):
+            header = m.group(1)
+            body = m.group(2)
+            if 'package = "' + name + '"' in body:
+                body = re.sub(r'^version\s*=\s*"[^"]*"\s*\n', '', body, flags=re.MULTILINE)
+                return header + 'path = "' + path + '"\n' + body
+            return m.group(0)
+        return replace_dep_table
 
-content = re.sub(
-    r'(\[dependencies\.[^\]]+\]\n)(.*?)(?=\n\[|\Z)',
-    replace_dep_table, content, flags=re.DOTALL
-)
+    content = re.sub(
+        r'(\[dependencies\.[^\]]+\]\n)(.*?)(?=\n\[|\Z)',
+        make_replace_dep_table(rel_path, pkg_name), content, flags=re.DOTALL
+    )
 
 with open(cargo_toml, 'w') as f:
     f.write(content)
 print('    已写入 ' + cargo_toml)
 PYEOF
-done
-echo ""
+        done
+        echo ""
+    fi
 fi  # USE_LOCAL_SBI 条件结束
 
 # ------------------------------------------------
