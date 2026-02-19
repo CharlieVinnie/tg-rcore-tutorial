@@ -1,9 +1,5 @@
 #!/bin/bash
 # 系统测试脚本：验证 tg-rcore-tutorial-sbi 的修改不影响 ch2~ch8 内核正常运行
-# 使用方法：
-#   ./systest.sh                          # 测试 systest.txt 中所有 crate
-#   ./systest.sh tg-rcore-tutorial-ch2    # 只测试指定的一个 crate
-#   ./systest.sh tg-rcore-tutorial-ch3 tg-rcore-tutorial-ch5  # 测试多个 crate
 
 set -e
 
@@ -11,11 +7,61 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SYSTEST_DIR="${SCRIPT_DIR}/systest"
 SYSTEST_TXT="${SCRIPT_DIR}/systest.txt"
 TIMEOUT_SEC="90"   # 每个 test.sh 的超时秒数（首次含依赖编译+运行约需90秒）
+USE_LOCAL_SBI=0    # 是否使用本地 SBI 的标志
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
+
+# ------------------------------------------------
+# 显示帮助信息
+# ------------------------------------------------
+show_help() {
+    cat << 'EOF'
+系统测试脚本：验证 tg-rcore-tutorial-sbi 的修改不影响 ch2~ch8 内核正常运行
+
+用法:
+  ./systest.sh [选项] [crate名称...]
+
+选项:
+  -l          使用本地 tg-rcore-tutorial-sbi（修改 Cargo.toml 指向本地路径）
+  -h, --help  显示此帮助信息并退出
+
+参数:
+  crate名称   要测试的 crate 名称，可指定多个。如不指定则测试 systest.txt 中的所有 crate。
+
+示例:
+  ./systest.sh                              # 测试所有 crate，使用 crates.io 的 SBI
+  ./systest.sh -l                           # 测试所有 crate，使用本地 SBI
+  ./systest.sh tg-rcore-tutorial-ch2        # 测试 ch2，使用 crates.io 的 SBI
+  ./systest.sh -l tg-rcore-tutorial-ch2     # 测试 ch2，使用本地 SBI
+  ./systest.sh tg-rcore-tutorial-ch3 ch5    # 测试 ch3 和 ch5，使用 crates.io 的 SBI
+  ./systest.sh -l ch2 ch3 ch4               # 测试 ch2、ch3、ch4，使用本地 SBI
+
+支持的 crate 名称:
+  tg-rcore-tutorial-ch2
+  tg-rcore-tutorial-ch3
+  tg-rcore-tutorial-ch4
+  tg-rcore-tutorial-ch5
+  tg-rcore-tutorial-ch6
+  tg-rcore-tutorial-ch7
+  tg-rcore-tutorial-ch8
+
+配置文件:
+  systest.txt  定义测试配置，格式为： "crate名称" "测试命令" "期望输出"
+EOF
+    exit 0
+}
+
+# ------------------------------------------------
+# 检查是否请求帮助
+# ------------------------------------------------
+for arg in "$@"; do
+    if [[ "$arg" == "-h" || "$arg" == "--help" ]]; then
+        show_help
+    fi
+done
 
 # ------------------------------------------------
 # 读取 systest.txt，构建全量数据数组
@@ -57,13 +103,23 @@ done < "${SYSTEST_TXT}"
 # ------------------------------------------------
 declare -a SELECTED_INDICES=()
 
-if [[ $# -eq 0 ]]; then
+# 解析参数，识别 -l 选项和 crate 名称
+declare -a CRATE_ARGS=()
+for arg in "$@"; do
+    if [[ "$arg" == "-l" ]]; then
+        USE_LOCAL_SBI=1
+    else
+        CRATE_ARGS+=("$arg")
+    fi
+done
+
+if [[ ${#CRATE_ARGS[@]} -eq 0 ]]; then
     for i in "${!ALL_CRATE_NAMES[@]}"; do
         SELECTED_INDICES+=("$i")
     done
 else
     declare -a INVALID_ARGS=()
-    for arg in "$@"; do
+    for arg in "${CRATE_ARGS[@]}"; do
         found=0
         for i in "${!ALL_CRATE_NAMES[@]}"; do
             if [[ "${ALL_CRATE_NAMES[$i]}" == "$arg" ]]; then
@@ -147,11 +203,12 @@ done
 echo ""
 
 # ------------------------------------------------
-# 阶段2：patch Cargo.toml，使用本地 SBI
+# 阶段2：patch Cargo.toml，使用本地 SBI（仅当 -l 参数时执行）
 # ------------------------------------------------
-echo "========================================"
-echo "阶段2：patch Cargo.toml 使用本地 SBI"
-echo "========================================"
+if [[ ${USE_LOCAL_SBI} -eq 1 ]]; then
+    echo "========================================"
+    echo "阶段2：patch Cargo.toml 使用本地 SBI"
+    echo "========================================"
 
 # 从 systest/<crate>/ 到 tg-rcore-tutorial-sbi/ 的相对路径
 SBI_REL_PATH="../.."
@@ -203,12 +260,31 @@ content = re.sub(
     replace_table, content, flags=re.MULTILINE
 )
 
+# 格式3: [dependencies.xxx] 表格格式，包含 package = "tg-rcore-tutorial-sbi"
+# 匹配 [dependencies.xxx] 到下一个以 [ 开头的行或文件结尾之间的内容
+def replace_dep_table(m):
+    header = m.group(1)  # [dependencies.xxx]\n
+    body = m.group(2)    # 该块的内容
+    # 检查是否包含 package = "tg-rcore-tutorial-sbi"
+    if 'package = "tg-rcore-tutorial-sbi"' in body:
+        # 移除 version 行
+        body = re.sub(r'^version\s*=\s*"[^"]*"\s*\n', '', body, flags=re.MULTILINE)
+        # 在开头添加 path 行
+        return header + 'path = "' + rel_path + '"\n' + body
+    return m.group(0)
+
+content = re.sub(
+    r'(\[dependencies\.[^\]]+\]\n)(.*?)(?=\n\[|\Z)',
+    replace_dep_table, content, flags=re.DOTALL
+)
+
 with open(cargo_toml, 'w') as f:
     f.write(content)
 print('    已写入 ' + cargo_toml)
 PYEOF
 done
 echo ""
+fi  # USE_LOCAL_SBI 条件结束
 
 # ------------------------------------------------
 # 阶段3：执行测试并收集结果
