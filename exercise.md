@@ -62,11 +62,11 @@ fn enable_deadlock_detect(&self, _caller: Caller, is_enable: i32) -> isize
 
 ### 实验要求
 
-- 在 tg-ch8 目录下完成实验。
+- 在 tg-rcore-tutorial-ch8 目录下完成实验。
 - 目录结构说明：
 
 ```
-tg-ch8/
+tg-rcore-tutorial-ch8/
 ├── Cargo.toml（内核配置文件）
 ├── src/（内核源代码，需要修改）
 │   ├── main.rs（内核主函数，包括系统调用接口实现）
@@ -74,19 +74,19 @@ tg-ch8/
 │   ├── process.rs（进程结构）
 │   ├── processor.rs（进程/线程管理器）
 │   └── virtio_block.rs（VirtIO 块设备实现）
-└── tg-user/（用户程序，运行时自动拉取，无需修改）
+└── tg-rcore-tutorial-user/（用户程序，运行时自动拉取，无需修改）
     └── src/bin（测试用例）
 ```
 
 > **说明**：
-> - `tg-user` 会在运行时自动拉取到 `tg-ch8/tg-user` 目录下
-> - 只需修改 `tg-ch8/src/` 目录下的内核代码
+> - `tg-rcore-tutorial-user` 会在运行时自动拉取到 `tg-rcore-tutorial-ch8/tg-rcore-tutorial-user` 目录下
+> - 只需修改 `tg-rcore-tutorial-ch8/src/` 目录下的内核代码
 
 - 运行练习测例：
 ```bash
 cargo run --features exercise
 ```
-然后在终端中输入 `ch8_usertest` 运行，这个测例打包了所有你需要通过的测例。
+然后在终端中输入 `tg-rcore-tutorial-ch8_usertest` 运行，这个测例打包了所有你需要通过的测例。
 
 - 测试练习测例：
 ```bash
