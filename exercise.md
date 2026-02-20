@@ -90,16 +90,16 @@ bitflags! {
 
 ### HINT
 
-- `linkat` 和 `unlinkat` 的文件路径 path 的读取可参考 `ch6/src/main.rs` 中的 `open` 系统调用实现。
-- `fstat` 的文件状态结构体 `Stat` 指针 st 的写入可参考 `ch6/src/main.rs` 中的 `clock_gettime` 系统调用对 `TimeSpec` 的写入实现。
+- `linkat` 和 `unlinkat` 的文件路径 path 的读取可参考 `tg-rcore-tutorial-ch6/src/main.rs` 中的 `open` 系统调用实现。
+- `fstat` 的文件状态结构体 `Stat` 指针 st 的写入可参考 `tg-rcore-tutorial-ch6/src/main.rs` 中的 `clock_gettime` 系统调用对 `TimeSpec` 的写入实现。
 
 ### 实验要求
 
-- 在 tg-ch6 目录下完成实验。
+- 在 tg-rcore-tutorial-ch6 目录下完成实验。
 - 目录结构说明：
 
 ```
-tg-ch6/
+tg-rcore-tutorial-ch6/
 ├── Cargo.toml（内核配置文件，需要修改依赖配置）
 ├── src/（内核源代码，需要修改）
 │   ├── main.rs（内核主函数，包括系统调用接口实现）
@@ -107,29 +107,29 @@ tg-ch6/
 │   ├── process.rs（进程结构）
 │   ├── processor.rs（进程管理器）
 │   └── virtio_block.rs（VirtIO 块设备实现）
-├── tg-easy-fs/（文件系统实现，需要拉取到本地并修改以支持硬链接）
+├── tg-rcore-tutorial-easy-fs/（文件系统实现，需要拉取到本地并修改以支持硬链接）
 │   └── src/
 │       ├── lib.rs
 │       └── ...
-└── tg-user/（用户程序，运行时自动拉取，无需修改）
+└── tg-rcore-tutorial-user/（用户程序，运行时自动拉取，无需修改）
     └── src/bin（测试用例）
 ```
 
 > **说明**：
-> - `tg-user` 会在运行时自动拉取到 `tg-ch6/tg-user` 目录下
-> - `tg-easy-fs` 需要拉取到本地才能修改其代码以支持硬链接
->   - 在 tg-ch6 目录下执行 `cargo clone tg-easy-fs` 拉取到本地
->   - 在 tg-ch6/Cargo.toml 中修改 tg-easy-fs 为本地路径：
+> - `tg-rcore-tutorial-user` 会在运行时自动拉取到 `tg-rcore-tutorial-ch6/tg-rcore-tutorial-user` 目录下
+> - `tg-rcore-tutorial-easy-fs` 需要拉取到本地才能修改其代码以支持硬链接
+>   - 在 tg-rcore-tutorial-ch6 目录下执行 `cargo clone tg-rcore-tutorial-easy-fs` 拉取到本地
+>   - 在 tg-rcore-tutorial-ch6/Cargo.toml 中修改 tg-rcore-tutorial-easy-fs 为本地路径：
 >     ```toml
 >     [dependencies]
->     tg-easy-fs = { path = "./tg-easy-fs" }
+>     tg-rcore-tutorial-easy-fs = { path = "./tg-rcore-tutorial-easy-fs" }
 >     ```
 
 - 运行练习测例：
 ```bash
 cargo run --features exercise
 ```
-然后在终端中输入 `ch6_usertest` 运行，这个测例打包了所有你需要通过的测例。
+然后在终端中输入 `tg-rcore-tutorial-ch6_usertest` 运行，这个测例打包了所有你需要通过的测例。
 
 - 测试练习测例：
 ```bash
