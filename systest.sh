@@ -6,7 +6,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SYSTEST_DIR="${SCRIPT_DIR}/systest"
 SYSTEST_TXT="${SCRIPT_DIR}/systest.txt"
-TIMEOUT_SEC="90"   # 每个 test.sh 的超时秒数（首次含依赖编译+运行约需90秒）
+TIMEOUT_SEC="160"   # 每个 test.sh 的超时秒数（首次含依赖编译+运行约需160秒）
 USE_LOCAL_SBI=0    # 是否使用本地 SBI 的标志
 
 RED='\033[0;31m'
