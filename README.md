@@ -1,4 +1,4 @@
-# tg-signal-defs
+# tg-rcore-tutorial-signal-defs
 
 Signal definitions for the rCore tutorial operating system.
 
@@ -6,7 +6,7 @@ Signal definitions for the rCore tutorial operating system.
 
 - 提供信号子系统共享的“纯定义层”，避免内核与用户侧重复定义。
 - 维持与 POSIX 语义接近的信号编号与处理动作描述。
-- 作为 `tg-signal` / `tg-signal-impl` 的稳定基础依赖。
+- 作为 `tg-rcore-tutorial-signal` / `tg-rcore-tutorial-signal-impl` 的稳定基础依赖。
 
 ## 总体架构
 
@@ -45,16 +45,16 @@ let _ = action;
 ```
 
 - 章节内真实用法：
-  - 通过 `tg-signal` / `tg-signal-impl` 间接用于 `ch7`、`ch8` 的信号处理。
+  - 通过 `tg-rcore-tutorial-signal` / `tg-rcore-tutorial-signal-impl` 间接用于 `tg-rcore-tutorial-ch7`、`tg-rcore-tutorial-ch8` 的信号处理。
 
-## 与 ch1~ch8 的关系
+## 与 tg-rcore-tutorial-ch1~tg-rcore-tutorial-ch8 的关系
 
 - 直接依赖章节：无（章节通常通过上层 crate 间接使用）。
-- 关键职责：提供信号编号与动作定义，供 `tg-signal` 体系复用。
+- 关键职责：提供信号编号与动作定义，供 `tg-rcore-tutorial-signal` 体系复用。
 - 关键引用链路：
-  - `tg-signal` -> `tg-signal-defs`
-  - `tg-signal-impl` -> `tg-signal-defs`
-  - `ch7/Cargo.toml`, `ch8/Cargo.toml`（通过上层间接依赖）
+  - `tg-rcore-tutorial-signal` -> `tg-rcore-tutorial-signal-defs`
+  - `tg-rcore-tutorial-signal-impl` -> `tg-rcore-tutorial-signal-defs`
+  - `tg-rcore-tutorial-ch7/Cargo.toml`, `tg-rcore-tutorial-ch8/Cargo.toml`（通过上层间接依赖）
 
 ## License
 
