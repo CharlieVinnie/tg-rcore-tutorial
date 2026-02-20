@@ -14,14 +14,14 @@ RED='\033[0;31m'
 YELLOW='\033[0;33m'
 NC='\033[0m'
 
-# 检查并安装 tg-checker
+# 检查并安装 tg-rcore-tutorial-checker
 ensure_tg_checker() {
-    if ! command -v tg-checker &> /dev/null; then
-        echo -e "${YELLOW}tg-checker 未安装，正在安装...${NC}"
-        if cargo install tg-checker@0.1.0-preview.1; then
-            echo -e "${GREEN}✓ tg-checker 安装成功${NC}"
+    if ! command -v tg-rcore-tutorial-checker &> /dev/null; then
+        echo -e "${YELLOW}tg-rcore-tutorial-checker 未安装，正在安装...${NC}"
+        if cargo install tg-rcore-tutorial-checker@0.4.2-preview.10; then
+            echo -e "${GREEN}✓ tg-rcore-tutorial-checker 安装成功${NC}"
         else
-            echo -e "${RED}✗ tg-checker 安装失败${NC}"
+            echo -e "${RED}✗ tg-rcore-tutorial-checker 安装失败${NC}"
             exit 1
         fi
     fi
@@ -36,11 +36,11 @@ run_base() {
     echo "运行 ch3 基础测试..."
     echo -e "${YELLOW}────────── cargo run 输出 ──────────${NC}"
 
-    # 使用 tee 将 cargo run 的输出同时显示在终端和传递给 tg-checker
+    # 使用 tee 将 cargo run 的输出同时显示在终端和传递给 tg-rcore-tutorial-checker
     # - cargo run 2>&1：合并 stdout 和 stderr（包含编译信息和运行输出）
     # - tee /dev/stderr：将输出复制一份到 stderr（显示在终端），原始流继续通过管道
-    # - tg-checker --ch 3：接收管道中的输出进行检查
-    if cargo run 2>&1 | tee /dev/stderr | tg-checker --ch 3; then
+    # - tg-rcore-tutorial-checker --ch 3：接收管道中的输出进行检查
+    if cargo run 2>&1 | tee /dev/stderr | tg-rcore-tutorial-checker --ch 3; then
         echo ""
         echo -e "${YELLOW}────────── 测试结果 ──────────${NC}"
         echo -e "${GREEN}✓ ch3 基础测试通过${NC}"
@@ -57,7 +57,7 @@ run_exercise() {
     echo "运行 ch3 练习测试..."
     echo -e "${YELLOW}────────── cargo run --features exercise 输出 ──────────${NC}"
 
-    if cargo run --features exercise 2>&1 | tee /dev/stderr | tg-checker --ch 3 --exercise; then
+    if cargo run --features exercise 2>&1 | tee /dev/stderr | tg-rcore-tutorial-checker --ch 3 --exercise; then
         echo ""
         echo -e "${YELLOW}────────── 测试结果 ──────────${NC}"
         echo -e "${GREEN}✓ ch3 练习测试通过${NC}"
