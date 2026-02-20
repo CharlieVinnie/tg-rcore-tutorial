@@ -1,4 +1,4 @@
-# tg-kernel-context
+# tg-rcore-tutorial-kernel-context
 
 Kernel context management for the rCore tutorial operating system.
 
@@ -62,18 +62,18 @@ unsafe { ctx.execute() };
 ```
 
 - 章节内真实用法：
-  - `ch2/src/main.rs` 使用 `LocalContext::user` 与 `execute` 跑用户程序。
-  - `ch4/src/process.rs` 在 `foreign` 场景下进行地址空间相关切换。
+  - `tg-rcore-tutorial-ch2/src/main.rs` 使用 `LocalContext::user` 与 `execute` 跑用户程序。
+  - `tg-rcore-tutorial-ch4/src/process.rs` 在 `foreign` 场景下进行地址空间相关切换。
 
-## 与 ch1~ch8 的关系
+## 与 tg-rcore-tutorial-ch1~tg-rcore-tutorial-ch8 的关系
 
-- 直接依赖章节：`ch2` 到 `ch8`。
+- 直接依赖章节：`tg-rcore-tutorial-ch2` 到 `tg-rcore-tutorial-ch8`。
 - 关键职责：承接 trap 返回、系统调用返回与任务切换的上下文管理。
 - 关键引用文件：
-  - `ch2/src/main.rs`
-  - `ch3/src/task.rs`
-  - `ch4/src/process.rs`
-  - `ch8/src/process.rs`
+  - `tg-rcore-tutorial-ch2/src/main.rs`
+  - `tg-rcore-tutorial-ch3/src/task.rs`
+  - `tg-rcore-tutorial-ch4/src/process.rs`
+  - `tg-rcore-tutorial-ch8/src/process.rs`
 
 ## License
 
