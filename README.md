@@ -1,8 +1,8 @@
-# tg-sbi
+# tg-rcore-tutorial-sbi
 
-[![Crates.io](https://img.shields.io/crates/v/tg-sbi.svg)](https://crates.io/crates/tg-sbi)
-[![Documentation](https://docs.rs/tg-sbi/badge.svg)](https://docs.rs/tg-sbi)
-[![License](https://img.shields.io/crates/l/tg-sbi.svg)](LICENSE)
+[![Crates.io](https://img.shields.io/crates/v/tg-rcore-tutorial-sbi.svg)](https://crates.io/crates/tg-rcore-tutorial-sbi)
+[![Documentation](https://docs.rs/tg-rcore-tutorial-sbi/badge.svg)](https://docs.rs/tg-rcore-tutorial-sbi)
+[![License](https://img.shields.io/crates/l/tg-rcore-tutorial-sbi.svg)](LICENSE)
 
 SBI (Supervisor Binary Interface) 调用封装模块，为 rCore 教学操作系统提供 S 态到 M 态/固件的统一调用接口。
 
@@ -55,18 +55,34 @@ shutdown(false);
 ```
 
 - 章节内真实用法：
-  - `ch1/src/main.rs` 使用 `console_putchar` 和 `shutdown`。
-  - `ch3/src/main.rs` 使用 `set_timer` 做时间片中断。
+  - `tg-rcore-tutorial-ch1/src/main.rs` 使用 `console_putchar` 和 `shutdown`。
+  - `tg-rcore-tutorial-ch3/src/main.rs` 使用 `set_timer` 做时间片中断。
 
-## 与 ch1~ch8 的关系
+## 本地修改组件后进行测试验证
+建议流程：
 
-- 直接依赖章节：`ch1` 到 `ch8` 全部依赖 `tg-sbi`。
+1. 在内核功能组件的目录先验证组件本身：
+   ```bash
+   cd tg-rcore-tutorial-sbi
+   cargo check 
+   ```
+2. 测试依赖该组件的OS，做集成验证：
+   ```bash
+   cd tg-rcore-tutorial-sbi
+   ./systest.sh -l  #测试依赖本地修改后的组件的各个内核是否能通过它们自身测试
+   # 如果测试在crates.io上的组件是否能通过测试，则执行  ./systest.sh
+   # 可通过修改 systest.txt 和sysdeps.txt 来灵活调整测试对象和测试本地修改的组件
+   ```
+
+## 与 tg-rcore-tutorial-ch1~tg-rcore-tutorial-ch8 的关系
+
+- 直接依赖章节：`tg-rcore-tutorial-ch1` 到 `tg-rcore-tutorial-ch8` 全部依赖 `tg-rcore-tutorial-sbi`。
 - 关键职责：提供最底层运行时交互（控制台输出、时钟中断、关机）。
 - 关键引用文件：
-  - `ch1/Cargo.toml`
-  - `ch2/src/main.rs`
-  - `ch3/src/main.rs`
-  - `ch8/src/main.rs`
+  - `tg-rcore-tutorial-ch1/Cargo.toml`
+  - `tg-rcore-tutorial-ch2/src/main.rs`
+  - `tg-rcore-tutorial-ch3/src/main.rs`
+  - `tg-rcore-tutorial-ch8/src/main.rs`
 
 ## License
 
