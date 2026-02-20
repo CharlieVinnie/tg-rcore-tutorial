@@ -1,8 +1,8 @@
-# tg-linker
+# tg-rcore-tutorial-linker
 
-[![Crates.io](https://img.shields.io/crates/v/tg-linker.svg)](https://crates.io/crates/tg-linker)
-[![Documentation](https://docs.rs/tg-linker/badge.svg)](https://docs.rs/tg-linker)
-[![License](https://img.shields.io/crates/l/tg-linker.svg)](LICENSE)
+[![Crates.io](https://img.shields.io/crates/v/tg-rcore-tutorial-linker.svg)](https://crates.io/crates/tg-rcore-tutorial-linker)
+[![Documentation](https://docs.rs/tg-rcore-tutorial-linker/badge.svg)](https://docs.rs/tg-rcore-tutorial-linker)
+[![License](https://img.shields.io/crates/l/tg-rcore-tutorial-linker.svg)](LICENSE)
 
 链接脚本与镜像布局支持模块，为 rCore 教学操作系统提供“链接脚本 + 启动入口 + 应用元信息”能力。
 
@@ -61,18 +61,18 @@ for app in tg_linker::AppMeta::locate().iter() {
 ```
 
 - 章节内真实用法：
-  - `ch2/build.rs` 使用 `NOBIOS_SCRIPT` 写入链接脚本。
-  - `ch2/src/main.rs` 与后续章节使用 `KernelLayout`、`AppMeta`。
+  - `tg-rcore-tutorial-ch2/build.rs` 使用 `NOBIOS_SCRIPT` 写入链接脚本。
+  - `tg-rcore-tutorial-ch2/src/main.rs` 与后续章节使用 `KernelLayout`、`AppMeta`。
 
-## 与 ch1~ch8 的关系
+## 与 tg-rcore-tutorial-ch1~tg-rcore-tutorial-ch8 的关系
 
-- 直接依赖章节：`ch2` 到 `ch8`（含 `build-dependencies`）。
+- 直接依赖章节：`tg-rcore-tutorial-ch2` 到 `tg-rcore-tutorial-ch8`（含 `build-dependencies`）。
 - 关键职责：组织内核/应用链接布局与运行时镜像元信息访问。
 - 关键引用文件：
-  - `ch2/build.rs`
-  - `ch2/src/main.rs`
-  - `ch8/build.rs`
-  - `ch8/src/main.rs`
+  - `tg-rcore-tutorial-ch2/build.rs`
+  - `tg-rcore-tutorial-ch2/src/main.rs`
+  - `tg-rcore-tutorial-ch8/build.rs`
+  - `tg-rcore-tutorial-ch8/src/main.rs`
 
 ## License
 
