@@ -1,4 +1,4 @@
-# tg-signal-impl
+# tg-rcore-tutorial-signal-impl
 
 A concrete signal handling implementation for the rCore tutorial operating system.
 
@@ -50,17 +50,17 @@ sig.add_signal(tg_signal::SignalNo::SIGINT);
 ```
 
 - 章节内真实用法：
-  - `ch7/src/process.rs` 中将 `SignalImpl` 挂到进程结构。
-  - `ch8/src/process.rs` 在进程/线程模型中继续复用。
+  - `tg-rcore-tutorial-ch7/src/process.rs` 中将 `SignalImpl` 挂到进程结构。
+  - `tg-rcore-tutorial-ch8/src/process.rs` 在进程/线程模型中继续复用。
 
-## 与 ch1~ch8 的关系
+## 与 tg-rcore-tutorial-ch1~tg-rcore-tutorial-ch8 的关系
 
-- 直接依赖章节：`ch7`、`ch8`。
+- 直接依赖章节：`tg-rcore-tutorial-ch7`、`tg-rcore-tutorial-ch8`。
 - 关键职责：提供可直接落地的信号处理逻辑实现。
 - 关键引用文件：
-  - `ch7/Cargo.toml`
-  - `ch7/src/process.rs`
-  - `ch8/src/process.rs`
+  - `tg-rcore-tutorial-ch7/Cargo.toml`
+  - `tg-rcore-tutorial-ch7/src/process.rs`
+  - `tg-rcore-tutorial-ch8/src/process.rs`
 
 ## License
 
