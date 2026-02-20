@@ -13,14 +13,14 @@ RED='\033[0;31m'
 YELLOW='\033[0;33m'
 NC='\033[0m'
 
-# 检查并安装 tg-checker
+# 检查并安装 tg-rcore-tutorial-checker
 ensure_tg_checker() {
-    if ! command -v tg-checker &> /dev/null; then
-        echo -e "${YELLOW}tg-checker 未安装，正在安装...${NC}"
-        if cargo install tg-checker@0.1.0-preview.1; then
-            echo -e "${GREEN}✓ tg-checker 安装成功${NC}"
+    if ! command -v tg-rcore-tutorial-checker &> /dev/null; then
+        echo -e "${YELLOW}tg-rcore-tutorial-checker 未安装，正在安装...${NC}"
+        if cargo install tg-rcore-tutorial-checker@0.4.2-preview.10; then
+            echo -e "${GREEN}✓ tg-rcore-tutorial-checker 安装成功${NC}"
         else
-            echo -e "${RED}✗ tg-checker 安装失败${NC}"
+            echo -e "${RED}✗ tg-rcore-tutorial-checker 安装失败${NC}"
             exit 1
         fi
     fi
@@ -37,8 +37,8 @@ run_base() {
     export CHAPTER=-7
     echo -e "${YELLOW}────────── cargo run 输出 ──────────${NC}"
 
-    # 使用 tee 将 cargo run 的输出同时显示在终端和传递给 tg-checker
-    if cargo run 2>&1 | tee /dev/stderr | tg-checker --ch 7; then
+    # 使用 tee 将 cargo run 的输出同时显示在终端和传递给 tg-rcore-tutorial-checker
+    if cargo run 2>&1 | tee /dev/stderr | tg-rcore-tutorial-checker --ch 7; then
         echo ""
         echo -e "${YELLOW}────────── 测试结果 ──────────${NC}"
         echo -e "${GREEN}✓ ch7 基础测试通过${NC}"
