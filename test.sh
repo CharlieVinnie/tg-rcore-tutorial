@@ -18,7 +18,7 @@ NC='\033[0m'
 ensure_tg_checker() {
     if ! command -v tg-rcore-tutorial-checker &> /dev/null; then
         echo -e "${YELLOW}tg-rcore-tutorial-checker 未安装，正在安装...${NC}"
-        if cargo install tg-rcore-tutorial-checker@0.4.2-preview.10; then
+        if cargo install tg-rcore-tutorial-checker; then
             echo -e "${GREEN}✓ tg-rcore-tutorial-checker 安装成功${NC}"
         else
             echo -e "${RED}✗ tg-rcore-tutorial-checker 安装失败${NC}"
