@@ -1,4 +1,4 @@
-# tg-kernel-vm
+# tg-rcore-tutorial-kernel-vm
 
 Kernel virtual memory management for the rCore tutorial operating system.
 
@@ -55,18 +55,18 @@ let _space = AddressSpace::<Sv39, MyPageManager>::new();
 ```
 
 - 章节内真实用法：
-  - `ch4/src/main.rs` 构建内核地址空间与映射。
-  - `ch4/src/process.rs`、`ch5/src/process.rs` 管理进程用户地址空间。
+  - `tg-rcore-tutorial-ch4/src/main.rs` 构建内核地址空间与映射。
+  - `tg-rcore-tutorial-ch4/src/process.rs`、`tg-rcore-tutorial-ch5/src/process.rs` 管理进程用户地址空间。
 
-## 与 ch1~ch8 的关系
+## 与 tg-rcore-tutorial-ch1~tg-rcore-tutorial-ch8 的关系
 
-- 直接依赖章节：`ch4` 到 `ch8`。
+- 直接依赖章节：`tg-rcore-tutorial-ch4` 到 `tg-rcore-tutorial-ch8`。
 - 关键职责：承接页表管理、地址翻译、进程地址空间隔离。
 - 关键引用文件：
-  - `ch4/Cargo.toml`
-  - `ch4/src/main.rs`
-  - `ch5/src/process.rs`
-  - `ch8/src/process.rs`
+  - `tg-rcore-tutorial-ch4/Cargo.toml`
+  - `tg-rcore-tutorial-ch4/src/main.rs`
+  - `tg-rcore-tutorial-ch5/src/process.rs`
+  - `tg-rcore-tutorial-ch8/src/process.rs`
 
 ## License
 
