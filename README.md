@@ -1,4 +1,4 @@
-# tg-sync
+# tg-rcore-tutorial-sync
 
 Synchronization primitives for the rCore tutorial operating system.
 
@@ -14,7 +14,7 @@ Synchronization primitives for the rCore tutorial operating system.
 - `mutex.rs`：互斥接口与阻塞互斥实现。
 - `semaphore.rs`：计数信号量。
 - `condvar.rs`：条件变量。
-- 与 `tg-task-manage::ThreadId` 协作记录等待队列。
+- 与 `tg-rcore-tutorial-task-manage::ThreadId` 协作记录等待队列。
 
 ## 主要特征
 
@@ -54,17 +54,17 @@ let _sem = Semaphore::new(1);
 ```
 
 - 章节内真实用法：
-  - `ch8/src/main.rs` 注册并处理同步相关系统调用。
-  - `ch8/src/process.rs` 管理互斥锁、信号量、条件变量对象。
+  - `tg-rcore-tutorial-ch8/src/main.rs` 注册并处理同步相关系统调用。
+  - `tg-rcore-tutorial-ch8/src/process.rs` 管理互斥锁、信号量、条件变量对象。
 
-## 与 ch1~ch8 的关系
+## 与 tg-rcore-tutorial-ch1~tg-rcore-tutorial-ch8 的关系
 
-- 直接依赖章节：`ch8`。
+- 直接依赖章节：`tg-rcore-tutorial-ch8`。
 - 关键职责：为并发章节提供内核同步原语实现。
 - 关键引用文件：
-  - `ch8/Cargo.toml`
-  - `ch8/src/main.rs`
-  - `ch8/src/process.rs`
+  - `tg-rcore-tutorial-ch8/Cargo.toml`
+  - `tg-rcore-tutorial-ch8/src/main.rs`
+  - `tg-rcore-tutorial-ch8/src/process.rs`
 
 ## License
 
