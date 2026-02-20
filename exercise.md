@@ -57,35 +57,35 @@ fn munmap(&self, _caller: Caller, addr: usize, len: usize) -> isize
 - 页表项权限标志使用 `VmFlags::build_from_str()` 构建，格式如 `"U_WRV"` 表示用户态可写可读有效
 - 一定要注意 mmap 的页表项权限，注意 RISC-V 页表项的格式与 prot 参数的区别
 - 你添加 `U`（用户态可访问）标志了吗？
-- 实现 `trace` 时，可参考 `ch4/src/main.rs` 中 `clock_gettime` 的实现方式，使用 `translate` 方法进行地址转换和权限检查
+- 实现 `trace` 时，可参考 `tg-rcore-tutorial-ch4/src/main.rs` 中 `clock_gettime` 的实现方式，使用 `translate` 方法进行地址转换和权限检查
 
 ### 实验要求
 
-- 在 tg-ch4 目录下完成实验。
+- 在 tg-rcore-tutorial-ch4 目录下完成实验。
 - 目录结构说明：
 
 ```
-tg-ch4/
+tg-rcore-tutorial-ch4/
 ├── Cargo.toml（内核配置文件，需要修改依赖配置）
 ├── src/（内核源代码，需要修改）
 │   ├── main.rs（内核主函数，包括系统调用接口实现）
 │   └── process.rs（进程结构）
-├── tg-kernel-vm/（虚拟内存模块，需要拉取到本地并修改）
+├── tg-rcore-tutorial-kernel-vm/（虚拟内存模块，需要拉取到本地并修改）
 │   └── src
 │       ├── lib.rs（PageManager trait 定义）
 │       └── space/mod.rs（AddressSpace 实现）
-└── tg-user/（用户程序，运行时自动拉取，无需修改）
+└── tg-rcore-tutorial-user/（用户程序，运行时自动拉取，无需修改）
     └── src/bin（测试用例）
 ```
 
 > **说明**：
-> - `tg-user` 会在运行时自动拉取到 `tg-ch4/tg-user` 目录下
-> - `tg-kernel-vm` 需要拉取到本地才能修改其代码:
->   - 在 tg-ch4 目录下执行 `cargo clone tg-kernel-vm` 拉取到本地
->   - 在 tg-ch4/Cargo.toml 中修改 tg-kernel-vm 为本地路径：
+> - `tg-rcore-tutorial-user` 会在运行时自动拉取到 `tg-rcore-tutorial-ch4/tg-rcore-tutorial-user` 目录下
+> - `tg-rcore-tutorial-kernel-vm` 需要拉取到本地才能修改其代码:
+>   - 在 tg-rcore-tutorial-ch4 目录下执行 `cargo clone tg-rcore-tutorial-kernel-vm` 拉取到本地
+>   - 在 tg-rcore-tutorial-ch4/Cargo.toml 中修改 tg-rcore-tutorial-kernel-vm 为本地路径：
 >     ```toml
 >     [dependencies]
->     tg-kernel-vm = { path = "./tg-kernel-vm" }
+>     tg-rcore-tutorial-kernel-vm = { path = "./tg-rcore-tutorial-kernel-vm" }
 >     ```
 
 - 运行练习测例：
