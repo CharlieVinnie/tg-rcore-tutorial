@@ -1,12 +1,12 @@
 [package]
 name = "tg-rcore-tutorial-signal-defs"
 description = "Signal definitions for rCore tutorial OS."
-version = "0.4.2-preview.8"
+version = "0.4.2-preview.9"
 edition = "2024"
 authors = ["scPointer <jax01@foxmail.com>"]
-repository = "https://github.com/rcore-os/tg-rcore-tutorial"
-homepage = "https://github.com/rcore-os/tg-rcore-tutorial"
-documentation = "https://docs.rs/tg-signal-defs"
+repository = "https://github.com/rcore-os/tg-rcore-tutorial-signal-defs"
+homepage = "https://github.com/rcore-os/tg-rcore-tutorial-signal-defs/tree/test"
+documentation = "https://docs.rs/tg-rcore-tutorial-signal-defs"
 license = "GPL-3.0"
 readme = "README.md"
 keywords = ["rcore", "signal", "no-std", "riscv"]
