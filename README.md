@@ -1,4 +1,4 @@
-# tg-easy-fs
+# tg-rcore-tutorial-easy-fs
 
 A simple filesystem implementation for the rCore tutorial operating system.
 
@@ -60,18 +60,18 @@ fn open_fs(dev: alloc::sync::Arc<dyn BlockDevice>) {
 ```
 
 - 章节内真实用法：
-  - `ch6/src/fs.rs` 中进行文件系统与文件接口调用。
-  - `ch6/build.rs`、`ch7/build.rs`、`ch8/build.rs` 用于准备镜像内容。
+  - `tg-rcore-tutorial-ch6/src/fs.rs` 中进行文件系统与文件接口调用。
+  - `tg-rcore-tutorial-ch6/build.rs`、`tg-rcore-tutorial-ch7/build.rs`、`tg-rcore-tutorial-ch8/build.rs` 用于准备镜像内容。
 
-## 与 ch1~ch8 的关系
+## 与 tg-rcore-tutorial-ch1~tg-rcore-tutorial-ch8 的关系
 
-- 直接依赖章节：`ch6` 到 `ch8`（含 `build-dependencies`）。
+- 直接依赖章节：`tg-rcore-tutorial-ch6` 到 `tg-rcore-tutorial-ch8`（含 `build-dependencies`）。
 - 关键职责：提供文件系统、文件描述符与管道能力。
 - 关键引用文件：
-  - `ch6/Cargo.toml`
-  - `ch6/src/fs.rs`
-  - `ch6/build.rs`
-  - `ch8/src/main.rs`
+  - `tg-rcore-tutorial-ch6/Cargo.toml`
+  - `tg-rcore-tutorial-ch6/src/fs.rs`
+  - `tg-rcore-tutorial-ch6/build.rs`
+  - `tg-rcore-tutorial-ch8/src/main.rs`
 
 ## License
 
