@@ -1,7 +1,7 @@
 [package]
 name = "tg-rcore-tutorial-checker"
 description = "A test output checker for rCore-Tutorial, validates kernel output against expected patterns."
-version = "0.4.2-preview.10"
+version = "0.4.3"
 edition = "2024"
 authors = ["Ivans-11 <w-yf22@mails.tsinghua.edu.cn>"]
 repository = "https://github.com/rcore-os/tg-rcore-tutorial-checker"
@@ -13,7 +13,7 @@ keywords = ["rcore", "checker", "testing", "riscv"]
 categories = ["command-line-utilities", "development-tools::testing"]
 
 [[bin]]
-name = "tg-checker"
+name = "tg-rcore-tutorial-checker"
 path = "src/main.rs"
 
 [dependencies]

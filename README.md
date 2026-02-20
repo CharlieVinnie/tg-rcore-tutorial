@@ -1,4 +1,4 @@
-# tg-checker
+# tg-rcore-tutorial-checker
 
 rCore-Tutorial 测试输出检测工具。
 
@@ -11,7 +11,7 @@ rCore-Tutorial 测试输出检测工具。
 ## 总体架构
 
 - `src/checker.rs`：核心匹配逻辑（期望/非期望模式校验）。
-- `src/cases/`：按章节组织测试规则（`ch2` 到 `ch8`）。
+- `src/cases/`：按章节组织测试规则（`tg-rcore-tutorial-ch2` 到 `tg-rcore-tutorial-ch8`）。
 - `src/main.rs`：CLI 参数解析与结果输出。
 
 ## 主要特征
@@ -43,30 +43,30 @@ rCore-Tutorial 测试输出检测工具。
 安装：
 
 ```bash
-cargo install tg-checker
+cargo install tg-rcore-tutorial-checker
 ```
 
 基础测试（ch2-ch8）：
 
 ```bash
-cargo run 2>&1 | tg-checker --ch 2
+cargo run 2>&1 | tg-rcore-tutorial-checker --ch 2
 ```
 
 Exercise 测试（ch3/ch4/ch5/ch6/ch8）：
 
 ```bash
-cargo run --features exercise 2>&1 | tg-checker --ch 3 --exercise
+cargo run --features exercise 2>&1 | tg-rcore-tutorial-checker --ch 3 --exercise
 ```
 
 ## 与 ch1~ch8 的关系
 
 - 直接依赖章节：无（不是章节内核的 Cargo 运行依赖）。
-- 关键职责：作为测试链路工具校验 `ch2~ch8` 的运行输出。
+- 关键职责：作为测试链路工具校验 `tg-rcore-tutorial-ch2~tg-rcore-tutorial-ch8` 的运行输出。
 - 关键引用文件：
-  - `ch2/test.sh`
-  - `ch3/test.sh`
-  - `ch8/test.sh`
-  - `tg-checker/src/cases/ch2.rs` 到 `tg-checker/src/cases/ch8.rs`
+  - `tg-rcore-tutorial-ch2/test.sh`
+  - `tg-rcore-tutorial-ch3/test.sh`
+  - `tg-rcore-tutorial-ch8/test.sh`
+  - `tg-rcore-tutorial-checker/src/cases/ch2.rs` 到 `tg-rcore-tutorial-checker/src/cases/ch8.rs`
 
 ## License
 

@@ -6,7 +6,7 @@ use std::io::{self, Read};
 use std::process::ExitCode;
 
 #[derive(Parser, Debug)]
-#[command(name = "tg-checker")]
+#[command(name = "tg-rcore-tutorial-checker")]
 #[command(author, version, about = "rCore-Tutorial test output checker")]
 struct Args {
     /// Chapter number (2-8)
@@ -34,7 +34,7 @@ fn main() -> ExitCode {
         println!("Available tests:");
         for (ch, exercise, desc) in cases::list_available_tests() {
             let mode = if exercise { "--exercise" } else { "" };
-            println!("  tg-checker --ch {} {:<12} # {}", ch, mode, desc);
+            println!("  tg-rcore-tutorial-checker --ch {} {:<12} # {}", ch, mode, desc);
         }
         return ExitCode::SUCCESS;
     }
