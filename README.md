@@ -1,4 +1,4 @@
-# tg-signal
+# tg-rcore-tutorial-signal
 
 Signal handling abstractions for the rCore tutorial operating system.
 
@@ -12,7 +12,7 @@ Signal handling abstractions for the rCore tutorial operating system.
 
 - `Signal` trait：信号管理核心接口。
 - `SignalResult`：信号处理结果枚举，指导上层调度决策。
-- 复用 `tg-signal-defs` 导出的 `SignalNo`、`SignalAction`。
+- 复用 `tg-rcore-tutorial-signal-defs` 导出的 `SignalNo`、`SignalAction`。
 
 ## 主要特征
 
@@ -47,17 +47,17 @@ fn drive_signal(sig: &mut dyn Signal, ctx: &mut LocalContext) -> SignalResult {
 ```
 
 - 章节内真实用法：
-  - `ch7/src/main.rs` 根据 `SignalResult` 决定进程后续状态。
-  - `ch8/src/main.rs` 延续并扩展同一信号处理流程。
+  - `tg-rcore-tutorial-ch7/src/main.rs` 根据 `SignalResult` 决定进程后续状态。
+  - `tg-rcore-tutorial-ch8/src/main.rs` 延续并扩展同一信号处理流程。
 
-## 与 ch1~ch8 的关系
+## 与 tg-rcore-tutorial-ch1~tg-rcore-tutorial-ch8 的关系
 
-- 直接依赖章节：`ch7`、`ch8`。
+- 直接依赖章节：`tg-rcore-tutorial-ch7`、`tg-rcore-tutorial-ch8`。
 - 关键职责：定义信号处理抽象接口，供内核主循环统一驱动。
 - 关键引用文件：
-  - `ch7/Cargo.toml`
-  - `ch7/src/main.rs`
-  - `ch8/src/main.rs`
+  - `tg-rcore-tutorial-ch7/Cargo.toml`
+  - `tg-rcore-tutorial-ch7/src/main.rs`
+  - `tg-rcore-tutorial-ch8/src/main.rs`
 
 ## License
 
