@@ -1,12 +1,12 @@
 [package]
 name = "tg-rcore-tutorial-kernel-vm"
 description = "Kernel virtual memory management for rCore tutorial OS."
-version = "0.4.2-preview.8"
+version = "0.4.2-preview.9"
 edition = "2024"
 authors = ["YdrMaster <ydrml@hotmail.com>"]
-repository = "https://github.com/rcore-os/tg-rcore-tutorial"
-homepage = "https://github.com/rcore-os/tg-rcore-tutorial"
-documentation = "https://docs.rs/tg-kernel-vm"
+repository = "https://github.com/rcore-os/tg-rcore-tutorial-kernel-vm"
+homepage = "https://github.com/rcore-os/tg-rcore-tutorial-kernel-vm/tree/test"
+documentation = "https://docs.rs/tg-rcore-tutorial-kernel-vm"
 license = "GPL-3.0"
 readme = "README.md"
 keywords = ["rcore", "kernel", "virtual-memory", "riscv"]
