@@ -1,8 +1,8 @@
-# tg-kernel-alloc
+# tg-rcore-tutorial-kernel-alloc
 
-[![Crates.io](https://img.shields.io/crates/v/tg-kernel-alloc.svg)](https://crates.io/crates/tg-kernel-alloc)
-[![Documentation](https://docs.rs/tg-kernel-alloc/badge.svg)](https://docs.rs/tg-kernel-alloc)
-[![License](https://img.shields.io/crates/l/tg-kernel-alloc.svg)](LICENSE)
+[![Crates.io](https://img.shields.io/crates/v/tg-rcore-tutorial-kernel-alloc.svg)](https://crates.io/crates/tg-rcore-tutorial-kernel-alloc)
+[![Documentation](https://docs.rs/tg-rcore-tutorial-kernel-alloc/badge.svg)](https://docs.rs/tg-rcore-tutorial-kernel-alloc)
+[![License](https://img.shields.io/crates/l/tg-rcore-tutorial-kernel-alloc.svg)](LICENSE)
 
 内核内存分配器模块，为 rCore 教学操作系统提供基于 buddy 算法的 `#[global_allocator]` 实现。
 
@@ -52,17 +52,17 @@ unsafe {
 ```
 
 - 章节内真实用法：
-  - `ch4/src/main.rs` 初始化内核堆。
-  - `ch5/src/main.rs` 到 `ch8/src/main.rs` 持续复用该分配能力。
+  - `tg-rcore-tutorial-ch4/src/main.rs` 初始化内核堆。
+  - `tg-rcore-tutorial-ch5/src/main.rs` 到 `tg-rcore-tutorial-ch8/src/main.rs` 持续复用该分配能力。
 
-## 与 ch1~ch8 的关系
+## 与 tg-rcore-tutorial-ch1~tg-rcore-tutorial-ch8 的关系
 
-- 直接依赖章节：`ch4` 到 `ch8`。
+- 直接依赖章节：`tg-rcore-tutorial-ch4` 到 `tg-rcore-tutorial-ch8`。
 - 关键职责：支撑进程控制块、文件系统对象、同步对象等堆上结构。
 - 关键引用文件：
-  - `ch4/Cargo.toml`
-  - `ch4/src/main.rs`
-  - `ch8/src/main.rs`
+  - `tg-rcore-tutorial-ch4/Cargo.toml`
+  - `tg-rcore-tutorial-ch4/src/main.rs`
+  - `tg-rcore-tutorial-ch8/src/main.rs`
 
 ## License
 
