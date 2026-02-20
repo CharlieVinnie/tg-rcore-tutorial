@@ -1,8 +1,8 @@
-# tg-task-manage
+# tg-rcore-tutorial-task-manage
 
-[![Crates.io](https://img.shields.io/crates/v/tg-task-manage.svg)](https://crates.io/crates/tg-task-manage)
-[![Documentation](https://docs.rs/tg-task-manage/badge.svg)](https://docs.rs/tg-task-manage)
-[![License](https://img.shields.io/crates/l/tg-task-manage.svg)](LICENSE)
+[![Crates.io](https://img.shields.io/crates/v/tg-rcore-tutorial-task-manage.svg)](https://crates.io/crates/tg-rcore-tutorial-task-manage)
+[![Documentation](https://docs.rs/tg-rcore-tutorial-task-manage/badge.svg)](https://docs.rs/tg-rcore-tutorial-task-manage)
+[![License](https://img.shields.io/crates/l/tg-rcore-tutorial-task-manage.svg)](LICENSE)
 
 任务管理模块，为 rCore 教学操作系统提供任务和进程管理功能，包括调度和关系管理。
 
@@ -64,17 +64,17 @@ fn _touch_id(id: ProcId) -> ProcId {
 ```
 
 - 章节内真实用法：
-  - `ch5/src/processor.rs` 使用 `PManager` 管理进程调度。
-  - `ch8/src/processor.rs` 使用 `PThreadManager` 管理线程调度。
+  - `tg-rcore-tutorial-ch5/src/processor.rs` 使用 `PManager` 管理进程调度。
+  - `tg-rcore-tutorial-ch8/src/processor.rs` 使用 `PThreadManager` 管理线程调度。
 
-## 与 ch1~ch8 的关系
+## 与 tg-rcore-tutorial-ch1~tg-rcore-tutorial-ch8 的关系
 
-- 直接依赖章节：`ch5` 到 `ch8`。
+- 直接依赖章节：`tg-rcore-tutorial-ch5` 到 `tg-rcore-tutorial-ch8`。
 - 关键职责：提供进程/线程 ID、关系维护与调度抽象。
 - 关键引用文件：
-  - `ch5/Cargo.toml`
-  - `ch5/src/processor.rs`
-  - `ch8/src/processor.rs`
+  - `tg-rcore-tutorial-ch5/Cargo.toml`
+  - `tg-rcore-tutorial-ch5/src/processor.rs`
+  - `tg-rcore-tutorial-ch8/src/processor.rs`
 
 ## License
 
