@@ -1,8 +1,8 @@
-# tg-console
+# tg-rcore-tutorial-console
 
-[![Crates.io](https://img.shields.io/crates/v/tg-console.svg)](https://crates.io/crates/tg-console)
-[![Documentation](https://docs.rs/tg-console/badge.svg)](https://docs.rs/tg-console)
-[![License](https://img.shields.io/crates/l/tg-console.svg)](LICENSE)
+[![Crates.io](https://img.shields.io/crates/v/tg-rcore-tutorial-console.svg)](https://crates.io/crates/tg-rcore-tutorial-console)
+[![Documentation](https://docs.rs/tg-rcore-tutorial-console/badge.svg)](https://docs.rs/tg-rcore-tutorial-console)
+[![License](https://img.shields.io/crates/l/tg-rcore-tutorial-console.svg)](LICENSE)
 
 控制台输出模块，为 rCore 教学操作系统提供可定制的 `print!`、`println!` 与日志能力。
 
@@ -14,7 +14,7 @@
 
 ## 总体架构
 
-- `Console` trait：抽象底层字符输出设备（通常由 `tg-sbi::console_putchar` 支撑）。
+- `Console` trait：抽象底层字符输出设备（通常由 `tg-rcore-tutorial-sbi::console_putchar` 支撑）。
 - 全局控制台注册：`init_console(&'static dyn Console)`。
 - 打印宏：`print!`、`println!` 最终走 `_print(...)`。
 - 日志集成：导出 `log` 并提供日志级别初始化。
@@ -66,17 +66,17 @@ println!("hello from kernel");
 ```
 
 - 章节内真实用法：
-  - `ch2/src/main.rs` 中初始化控制台与日志。
-  - `ch3/src/main.rs` 及之后章节统一使用该接口输出。
+  - `tg-rcore-tutorial-ch2/src/main.rs` 中初始化控制台与日志。
+  - `tg-rcore-tutorial-ch3/src/main.rs` 及之后章节统一使用该接口输出。
 
-## 与 ch1~ch8 的关系
+## 与 tg-rcore-tutorial-ch1~tg-rcore-tutorial-ch8 的关系
 
-- 直接依赖章节：`ch2` 到 `ch8`。
+- 直接依赖章节：`tg-rcore-tutorial-ch2` 到 `tg-rcore-tutorial-ch8`。
 - 关键职责：提供教学内核的统一打印与日志能力。
 - 关键引用文件：
-  - `ch2/Cargo.toml`
-  - `ch2/src/main.rs`
-  - `ch8/src/main.rs`
+  - `tg-rcore-tutorial-ch2/Cargo.toml`
+  - `tg-rcore-tutorial-ch2/src/main.rs`
+  - `tg-rcore-tutorial-ch8/src/main.rs`
 
 ## License
 
