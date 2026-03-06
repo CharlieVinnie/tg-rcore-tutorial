@@ -32,6 +32,8 @@ pub struct TaskControlBlock {
     /// 用户栈：8 KiB（1024 个 usize = 1024 × 8 = 8192 字节）
     /// 每个任务拥有独立的栈空间，避免栈溢出影响其他任务
     stack: [usize; 1024],
+    /// 系统调用次数统计
+    pub syscall_counts: [u32; 500],
 }
 
 /// 调度事件
@@ -55,6 +57,7 @@ impl TaskControlBlock {
         ctx: LocalContext::empty(),
         finish: false,
         stack: [0; 1024],
+        syscall_counts: [0; 500],
     };
 
     /// 初始化一个任务
@@ -65,6 +68,7 @@ impl TaskControlBlock {
     pub fn init(&mut self, entry: usize) {
         self.stack.fill(0);
         self.finish = false;
+        self.syscall_counts.fill(0);
         self.ctx = LocalContext::user(entry);
         // 栈从高地址向低地址增长，所以 sp 指向栈顶（数组末尾之后的地址）
         *self.ctx.sp_mut() = self.stack.as_ptr() as usize + core::mem::size_of_val(&self.stack);
@@ -98,6 +102,13 @@ impl TaskControlBlock {
             self.ctx.a(4),
             self.ctx.a(5),
         ];
+
+        // 统计系统调用次数
+        let id_usize = self.ctx.a(7);
+        if id_usize < 500 {
+            self.syscall_counts[id_usize] += 1;
+        }
+
         match tg_syscall::handle(Caller { entity: 0, flow: 0 }, id, args) {
             Ret::Done(ret) => match id {
                 // exit 系统调用：返回退出事件
@@ -110,7 +121,18 @@ impl TaskControlBlock {
                 }
                 // 其他系统调用（如 write、clock_gettime）：继续执行
                 _ => {
-                    *self.ctx.a_mut(0) = ret as _;
+                    let mut final_ret = ret as isize;
+                    // 处理 sys_trace (ID=410) 的 trace_request=2 (查询系统调用计数)
+                    if id_usize == 410 && args[0] == 2 {
+                        let query_id = args[1];
+                        if query_id < 500 {
+                            final_ret = self.syscall_counts[query_id] as isize;
+                        } else {
+                            final_ret = 0;
+                        }
+                    }
+
+                    *self.ctx.a_mut(0) = final_ret as _;
                     self.ctx.move_next(); // sepc += 4，跳过 ecall 指令
                     Event::None
                 }

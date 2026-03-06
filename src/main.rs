@@ -64,7 +64,7 @@ const APP_CAPACITY: usize = 32;
 #[unsafe(no_mangle)]
 #[unsafe(link_section = ".text.entry")]
 unsafe extern "C" fn _start() -> ! {
-    const STACK_SIZE: usize = (APP_CAPACITY + 2) * 8192;
+    const STACK_SIZE: usize = (APP_CAPACITY + 16) * 8192;
     #[unsafe(link_section = ".boot.stack")]
     static mut STACK: [u8; STACK_SIZE] = [0u8; STACK_SIZE];
 
@@ -306,12 +306,26 @@ mod impls {
         fn trace(
             &self,
             _caller: Caller,
-            _trace_request: usize,
-            _id: usize,
-            _data: usize,
+            trace_request: usize,
+            id: usize,
+            data: usize,
         ) -> isize {
-            tg_console::log::info!("trace: not implemented");
-            -1
+            match trace_request {
+                0 => {
+                    let ptr = id as *const u8;
+                    unsafe { ptr.read_volatile() as isize }
+                }
+                1 => {
+                    let ptr = id as *mut u8;
+                    unsafe { ptr.write_volatile((data & 0xff) as u8) };
+                    0
+                }
+                2 => {
+                    // 查询系统调用计数：真值将在 task.rs 的 handle_syscall 被重写填入，此处占位 0
+                    0
+                }
+                _ => -1,
+            }
         }
     }
 }
