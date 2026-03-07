@@ -724,10 +724,13 @@ mod impls {
                 .find(|(_, item)| item.is_none()).map(|(id, _)| id)
             {
                 current_proc.semaphore_list[id] = Some(Arc::new(Semaphore::new(res_count)));
+                current_proc.sem_tracker.add_resource(id, res_count);
                 id
             } else {
                 current_proc.semaphore_list.push(Some(Arc::new(Semaphore::new(res_count))));
-                current_proc.semaphore_list.len() - 1
+                let id = current_proc.semaphore_list.len() - 1;
+                current_proc.sem_tracker.add_resource(id, res_count);
+                id
             };
             id as isize
         }
@@ -735,9 +738,18 @@ mod impls {
         /// V 操作：释放信号量，唤醒等待线程
         fn semaphore_up(&self, _caller: Caller, sem_id: usize) -> isize {
             let processor: *mut ProcessorInner = PROCESSOR.get_mut() as *mut ProcessorInner;
+            let current = unsafe { (*processor).current().unwrap() };
+            let caller_tid = current.tid;
             let current_proc = unsafe { (*processor).get_current_proc().unwrap() };
             let sem = Arc::clone(current_proc.semaphore_list[sem_id].as_ref().unwrap());
+            if current_proc.is_deadlock_detect {
+                current_proc.sem_tracker.deallocate(caller_tid, sem_id, 1);
+            }
             if let Some(tid) = sem.up() {
+                if current_proc.is_deadlock_detect {
+                    current_proc.sem_tracker.allocate(tid, sem_id, 1);
+                    current_proc.sem_tracker.set_need(tid, sem_id, 0);
+                }
                 unsafe { (*processor).re_enque(tid); }
             }
             0
@@ -749,8 +761,24 @@ mod impls {
             let current = unsafe { (*processor).current().unwrap() };
             let tid = current.tid;
             let current_proc = unsafe { (*processor).get_current_proc().unwrap() };
+            if current_proc.is_deadlock_detect {
+                if !current_proc.sem_tracker.check_safe(tid, sem_id, 1) {
+                    return -0xdead;
+                }
+            }
             let sem = Arc::clone(current_proc.semaphore_list[sem_id].as_ref().unwrap());
-            if !sem.down(tid) { -1 } else { 0 }
+            if !sem.down(tid) {
+                if current_proc.is_deadlock_detect {
+                    current_proc.sem_tracker.set_need(tid, sem_id, 1);
+                }
+                -1
+            } else {
+                if current_proc.is_deadlock_detect {
+                    current_proc.sem_tracker.allocate(tid, sem_id, 1);
+                    current_proc.sem_tracker.set_need(tid, sem_id, 0);
+                }
+                0
+            }
         }
 
         /// 创建互斥锁（blocking=true 为阻塞锁）
@@ -763,19 +791,31 @@ mod impls {
                 .find(|(_, item)| item.is_none()).map(|(id, _)| id)
             {
                 current_proc.mutex_list[id] = new_mutex;
+                current_proc.mutex_tracker.add_resource(id, 1);
                 id as isize
             } else {
                 current_proc.mutex_list.push(new_mutex);
-                current_proc.mutex_list.len() as isize - 1
+                let id = current_proc.mutex_list.len() - 1;
+                current_proc.mutex_tracker.add_resource(id, 1);
+                id as isize
             }
         }
 
         /// 解锁，唤醒等待线程
         fn mutex_unlock(&self, _caller: Caller, mutex_id: usize) -> isize {
             let processor: *mut ProcessorInner = PROCESSOR.get_mut() as *mut ProcessorInner;
+            let current = unsafe { (*processor).current().unwrap() };
+            let caller_tid = current.tid;
             let current_proc = unsafe { (*processor).get_current_proc().unwrap() };
+            if current_proc.is_deadlock_detect {
+                current_proc.mutex_tracker.deallocate(caller_tid, mutex_id, 1);
+            }
             let mutex = Arc::clone(current_proc.mutex_list[mutex_id].as_ref().unwrap());
             if let Some(tid) = mutex.unlock() {
+                if current_proc.is_deadlock_detect {
+                    current_proc.mutex_tracker.allocate(tid, mutex_id, 1);
+                    current_proc.mutex_tracker.set_need(tid, mutex_id, 0);
+                }
                 unsafe { (*processor).re_enque(tid); }
             }
             0
@@ -787,8 +827,26 @@ mod impls {
             let current = unsafe { (*processor).current().unwrap() };
             let tid = current.tid;
             let current_proc = unsafe { (*processor).get_current_proc().unwrap() };
+            
+            if current_proc.is_deadlock_detect {
+                if !current_proc.mutex_tracker.check_safe(tid, mutex_id, 1) {
+                    return -0xdead;
+                }
+            }
+            
             let mutex = Arc::clone(current_proc.mutex_list[mutex_id].as_ref().unwrap());
-            if !mutex.lock(tid) { -1 } else { 0 }
+            if !mutex.lock(tid) { 
+                if current_proc.is_deadlock_detect {
+                    current_proc.mutex_tracker.set_need(tid, mutex_id, 1);
+                }
+                -1 
+            } else { 
+                if current_proc.is_deadlock_detect {
+                    current_proc.mutex_tracker.allocate(tid, mutex_id, 1);
+                    current_proc.mutex_tracker.set_need(tid, mutex_id, 0);
+                }
+                0 
+            }
         }
 
         /// 创建条件变量
@@ -834,8 +892,9 @@ mod impls {
 
         /// 死锁检测（TODO 练习题）
         fn enable_deadlock_detect(&self, _caller: Caller, is_enable: i32) -> isize {
-            tg_console::log::info!("enable_deadlock_detect: is_enable = {is_enable}, not implemented");
-            -1
+            let current_proc = PROCESSOR.get_mut().get_current_proc().unwrap();
+            current_proc.is_deadlock_detect = is_enable == 1;
+            0
         }
     }
 }

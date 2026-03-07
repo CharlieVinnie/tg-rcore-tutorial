@@ -65,6 +65,108 @@ impl Thread {
     }
 }
 
+use alloc::collections::BTreeMap;
+
+#[derive(Clone)]
+pub struct ResourceTracker {
+    pub available: Vec<usize>,
+    pub allocation: BTreeMap<ThreadId, Vec<usize>>,
+    pub need: BTreeMap<ThreadId, Vec<usize>>,
+}
+
+impl ResourceTracker {
+    pub fn new() -> Self {
+        Self {
+            available: Vec::new(),
+            allocation: BTreeMap::new(),
+            need: BTreeMap::new(),
+        }
+    }
+
+    pub fn add_resource(&mut self, id: usize, capacity: usize) {
+        if id >= self.available.len() {
+            self.available.resize(id + 1, 0);
+        }
+        self.available[id] = capacity;
+        for alloc in self.allocation.values_mut() {
+            if alloc.len() <= id { alloc.resize(id + 1, 0); }
+            alloc[id] = 0;
+        }
+        for need in self.need.values_mut() {
+            if need.len() <= id { need.resize(id + 1, 0); }
+            need[id] = 0;
+        }
+    }
+
+    pub fn ensure_thread(&mut self, tid: ThreadId) {
+        let m = self.available.len();
+        self.allocation.entry(tid).or_insert_with(|| vec![0; m]).resize(m, 0);
+        self.need.entry(tid).or_insert_with(|| vec![0; m]).resize(m, 0);
+    }
+
+    pub fn check_safe(&mut self, tid: ThreadId, res_id: usize, request: usize) -> bool {
+        self.ensure_thread(tid);
+        self.need.get_mut(&tid).unwrap()[res_id] += request;
+        
+        let mut work = self.available.clone();
+        let mut finish = BTreeMap::new();
+        let all_tids: Vec<ThreadId> = self.allocation.keys().copied().collect();
+        for t in &all_tids {
+            finish.insert(*t, false);
+        }
+
+        let m = self.available.len();
+        loop {
+            let mut found = false;
+            for t in &all_tids {
+                if !finish[t] {
+                    self.ensure_thread(*t);
+                    let need = self.need.get(t).unwrap();
+                    let mut can_allocate = true;
+                    for i in 0..m {
+                        if work.len() <= i { work.push(0); }
+                        if need.len() > i && need[i] > work[i] {
+                            can_allocate = false;
+                            break;
+                        }
+                    }
+                    if can_allocate {
+                        let alloc = self.allocation.get(t).unwrap();
+                        for i in 0..alloc.len() {
+                            if work.len() <= i { work.push(0); }
+                            work[i] += alloc[i];
+                        }
+                        *finish.get_mut(t).unwrap() = true;
+                        found = true;
+                    }
+                }
+            }
+            if !found { break; }
+        }
+
+        let is_safe = finish.values().all(|&f| f);
+        self.need.get_mut(&tid).unwrap()[res_id] -= request;
+        is_safe
+    }
+
+    pub fn allocate(&mut self, tid: ThreadId, res_id: usize, amount: usize) {
+        self.ensure_thread(tid);
+        self.allocation.get_mut(&tid).unwrap()[res_id] += amount;
+        self.available[res_id] -= amount;
+    }
+
+    pub fn deallocate(&mut self, tid: ThreadId, res_id: usize, amount: usize) {
+        self.ensure_thread(tid);
+        self.allocation.get_mut(&tid).unwrap()[res_id] -= amount;
+        self.available[res_id] += amount;
+    }
+
+    pub fn set_need(&mut self, tid: ThreadId, res_id: usize, amount: usize) {
+        self.ensure_thread(tid);
+        self.need.get_mut(&tid).unwrap()[res_id] = amount;
+    }
+}
+
 /// 进程（资源容器）
 ///
 /// 管理地址空间、文件描述符、同步原语、信号等共享资源。
@@ -84,6 +186,10 @@ pub struct Process {
     pub mutex_list: Vec<Option<Arc<dyn MutexTrait>>>,
     /// 条件变量列表（**本章新增**，所有线程共享）
     pub condvar_list: Vec<Option<Arc<Condvar>>>,
+    
+    pub is_deadlock_detect: bool,
+    pub mutex_tracker: ResourceTracker,
+    pub sem_tracker: ResourceTracker,
 }
 
 impl Process {
@@ -134,6 +240,9 @@ impl Process {
                 semaphore_list: Vec::new(),
                 mutex_list: Vec::new(),
                 condvar_list: Vec::new(),
+                is_deadlock_detect: self.is_deadlock_detect,
+                mutex_tracker: ResourceTracker::new(),
+                sem_tracker: ResourceTracker::new(),
             },
             thread,
         ))
@@ -206,6 +315,9 @@ impl Process {
                 semaphore_list: Vec::new(),
                 mutex_list: Vec::new(),
                 condvar_list: Vec::new(),
+                is_deadlock_detect: false,
+                mutex_tracker: ResourceTracker::new(),
+                sem_tracker: ResourceTracker::new(),
             },
             thread,
         ))
