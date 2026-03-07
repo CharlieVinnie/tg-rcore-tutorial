@@ -107,8 +107,29 @@ impl Schedule<ProcId> for ProcManager {
         self.ready_queue.push_back(id);
     }
 
-    /// 从就绪队列头部取出下一个要执行的进程
+    /// 从就绪队列中取出下一个要执行的进程（使用 stride 调度算法）
     fn fetch(&mut self) -> Option<ProcId> {
-        self.ready_queue.pop_front()
+        let mut min_stride = usize::MAX;
+        let mut min_idx = None;
+
+        for (i, &pid) in self.ready_queue.iter().enumerate() {
+            if let Some(task) = self.tasks.get(&pid) {
+                if task.stride < min_stride {
+                    min_stride = task.stride;
+                    min_idx = Some(i);
+                }
+            }
+        }
+
+        if let Some(idx) = min_idx {
+            let pid = self.ready_queue.remove(idx).unwrap();
+            if let Some(task) = self.tasks.get_mut(&pid) {
+                const BIG_STRIDE: usize = 0x7FFF_FFFF;
+                task.stride += BIG_STRIDE / task.priority;
+            }
+            Some(pid)
+        } else {
+            None
+        }
     }
 }

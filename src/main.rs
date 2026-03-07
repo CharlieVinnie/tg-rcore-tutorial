@@ -642,14 +642,29 @@ mod impls {
         ///
         /// 与 fork+exec 不同，spawn 直接从 ELF 创建新进程，
         /// 无需复制父进程地址空间。
-        ///
-        /// TODO: 实现 spawn 系统调用（练习题）
-        fn spawn(&self, _caller: Caller, _path: usize, _count: usize) -> isize {
-            let current = PROCESSOR.get_mut().current().unwrap();
-            tg_console::log::info!(
-                "spawn: parent pid = {}, not implemented",
-                current.pid.get_usize()
-            );
+        fn spawn(&self, _caller: Caller, path: usize, count: usize) -> isize {
+            const READABLE: VmFlags<Sv39> = build_flags("RV");
+            let processor: *mut PManager<ProcStruct, ProcManager> = PROCESSOR.get_mut() as *mut _;
+            let current = unsafe { (*processor).current().unwrap() };
+            
+            if let Some(name) = current
+                .address_space
+                .translate::<u8>(VAddr::new(path), READABLE)
+                .map(|ptr| unsafe {
+                    core::str::from_utf8_unchecked(core::slice::from_raw_parts(ptr.as_ptr(), count))
+                })
+            {
+                if let Some(data) = APPS.get(name) {
+                    if let Ok(elf) = ElfFile::new(data) {
+                        if let Some(child_proc) = ProcStruct::from_elf(elf) {
+                            let pid = child_proc.pid;
+                            let parent_pid = current.pid;
+                            unsafe { (*processor).add(pid, child_proc, parent_pid) };
+                            return pid.get_usize() as isize;
+                        }
+                    }
+                }
+            }
             -1
         }
 
@@ -678,15 +693,14 @@ mod impls {
 
         /// set_priority 系统调用：设置当前进程优先级
         ///
-        /// TODO: 实现 set_priority 系统调用（练习题：stride 调度算法）
+        /// 设置 stride 调度算法的优先级。
         fn set_priority(&self, _caller: Caller, prio: isize) -> isize {
+            if prio < 2 {
+                return -1;
+            }
             let current = PROCESSOR.get_mut().current().unwrap();
-            tg_console::log::info!(
-                "set_priority: pid = {}, prio = {}, not implemented",
-                current.pid.get_usize(),
-                prio
-            );
-            -1
+            current.priority = prio as usize;
+            prio
         }
     }
 
@@ -727,8 +741,6 @@ mod impls {
     /// 内存管理系统调用实现
     impl Memory for SyscallContext {
         /// mmap 系统调用：映射匿名内存
-        ///
-        /// TODO: 实现 mmap 系统调用（练习题）
         fn mmap(
             &self,
             _caller: Caller,
@@ -739,18 +751,74 @@ mod impls {
             _fd: i32,
             _offset: usize,
         ) -> isize {
-            tg_console::log::info!(
-                "mmap: addr = {addr:#x}, len = {len}, prot = {prot}, not implemented"
-            );
-            -1
+            if addr % 4096 != 0 {
+                return -1;
+            }
+            if prot & !0b111 != 0 || prot == 0 {
+                return -1;
+            }
+            if len == 0 {
+                return 0;
+            }
+            
+            let mut flags_bytes = [b'U', b'_', b'_', b'_', b'V'];
+            if prot & 1 != 0 {
+                flags_bytes[3] = b'R';
+            }
+            if prot & 2 != 0 {
+                flags_bytes[2] = b'W';
+            }
+            if prot & 4 != 0 {
+                flags_bytes[1] = b'X';
+            }
+            let flags_str = unsafe { core::str::from_utf8_unchecked(&flags_bytes) };
+            let flags = build_flags(flags_str);
+            
+            let start = VAddr::<Sv39>::new(addr).floor();
+            let end = VAddr::<Sv39>::new(addr + len).ceil();
+            
+            let process = PROCESSOR.get_mut().current().unwrap();
+            
+            let mut conflict = false;
+            for area in &process.address_space.areas {
+                if area.end > start && area.start < end {
+                    conflict = true;
+                    break;
+                }
+            }
+            if conflict {
+                return -1;
+            }
+
+            process.address_space.map(start..end, &[], 0, flags);
+            0
         }
 
         /// munmap 系统调用：取消内存映射
-        ///
-        /// TODO: 实现 munmap 系统调用（练习题）
         fn munmap(&self, _caller: Caller, addr: usize, len: usize) -> isize {
-            tg_console::log::info!("munmap: addr = {addr:#x}, len = {len}, not implemented");
-            -1
+            if addr % 4096 != 0 {
+                return -1;
+            }
+
+            let start = VAddr::<Sv39>::new(addr).floor();
+            let end = VAddr::<Sv39>::new(addr + len).ceil();
+            
+            let process = PROCESSOR.get_mut().current().unwrap();
+            
+            let mut mapped = false;
+            for area in &process.address_space.areas {
+                if start >= area.start && end <= area.end {
+                    mapped = true;
+                    break;
+                }
+            }
+
+            if !mapped {
+                return -1;
+            }
+
+            process.address_space.unmap(start..end);
+            0
         }
     }
 }
