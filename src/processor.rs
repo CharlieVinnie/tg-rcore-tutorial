@@ -81,6 +81,27 @@ impl Schedule<ProcId> for ProcManager {
     }
     /// 从就绪队列头部取出
     fn fetch(&mut self) -> Option<ProcId> {
-        self.ready_queue.pop_front()
+        let mut best: Option<ProcId> = None;
+        let mut min_stride = usize::MAX;
+
+        for id in self.ready_queue.iter() {
+            if let Some(task) = self.tasks.get(id) {
+                if task.stride < min_stride {
+                    min_stride = task.stride;
+                    best = Some(*id);
+                }
+            }
+        }
+
+        if let Some(best_id) = best {
+            self.ready_queue.retain(|&x| x != best_id);
+            if let Some(task) = self.tasks.get_mut(&best_id) {
+                let pass = 0x7FFF_FFFF / task.priority;
+                task.stride += pass;
+            }
+            Some(best_id)
+        } else {
+            None
+        }
     }
 }
