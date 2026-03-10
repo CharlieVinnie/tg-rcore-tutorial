@@ -264,18 +264,7 @@ extern "C" fn schedule() -> ! {
                         },
                         // 其他系统调用：写回返回值，sepc += 4
                         _ => {
-                            let mut final_ret = ret as isize;
-                            // 处理 sys_trace (ID=410) 的 trace_request=2 (查询系统调用计数)
-                            if id_usize == 410 && args[0] == 2 {
-                                let query_id = args[1];
-                                if query_id < 500 {
-                                    final_ret = unsafe { PROCESSES.get_mut()[0].syscall_counts[query_id] as isize };
-                                } else {
-                                    final_ret = 0;
-                                }
-                            }
-
-                            *ctx.a_mut(0) = final_ret as _;
+                            *ctx.a_mut(0) = ret as _;
                             ctx.move_next();
                         }
                     },
@@ -615,8 +604,11 @@ mod impls {
                     }
                 }
                 2 => {
-                    // 查询系统调用计数：真值将在 main.rs 的 schedule 回调被重写填入，此处占位 0
-                    0
+                    if id < 500 {
+                        unsafe { PROCESSES.get_mut()[caller.entity].syscall_counts[id] as isize }
+                    } else {
+                        0
+                    }
                 }
                 _ => -1,
             }
