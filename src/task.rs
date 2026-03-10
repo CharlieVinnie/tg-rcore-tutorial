@@ -109,7 +109,7 @@ impl TaskControlBlock {
             self.syscall_counts[id_usize] += 1;
         }
 
-        match tg_syscall::handle(Caller { entity: 0, flow: 0 }, id, args) {
+        match tg_syscall::handle(Caller { entity: self.syscall_counts.as_ptr() as usize, flow: 0 }, id, args) {
             Ret::Done(ret) => match id {
                 // exit 系统调用：返回退出事件
                 Id::EXIT => Event::Exit(self.ctx.a(0)),
@@ -121,18 +121,7 @@ impl TaskControlBlock {
                 }
                 // 其他系统调用（如 write、clock_gettime）：继续执行
                 _ => {
-                    let mut final_ret = ret as isize;
-                    // 处理 sys_trace (ID=410) 的 trace_request=2 (查询系统调用计数)
-                    if id_usize == 410 && args[0] == 2 {
-                        let query_id = args[1];
-                        if query_id < 500 {
-                            final_ret = self.syscall_counts[query_id] as isize;
-                        } else {
-                            final_ret = 0;
-                        }
-                    }
-
-                    *self.ctx.a_mut(0) = final_ret as _;
+                    *self.ctx.a_mut(0) = ret as _;
                     self.ctx.move_next(); // sepc += 4，跳过 ecall 指令
                     Event::None
                 }

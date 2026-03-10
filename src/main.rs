@@ -321,8 +321,12 @@ mod impls {
                     0
                 }
                 2 => {
-                    // 查询系统调用计数：真值将在 task.rs 的 handle_syscall 被重写填入，此处占位 0
-                    0
+                    let counts = unsafe { core::slice::from_raw_parts(_caller.entity as *const u32, 500) };
+                    if id < 500 {
+                        counts[id] as isize
+                    } else {
+                        0
+                    }
                 }
                 _ => -1,
             }
