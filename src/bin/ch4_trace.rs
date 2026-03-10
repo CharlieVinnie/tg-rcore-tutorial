@@ -30,7 +30,7 @@ extern "C" fn main() -> i32 {
     let len: usize = 4096;
     let prot: usize = 1; // READONLY
 
-    assert_eq!(0, mmap(start, len, prot));
+    assert_eq!(0, mmap(start, len, prot, 34, usize::MAX, 0));
 
     assert!(trace_read(start as *const u8).is_some()); // 可读
     assert_eq!(-1, trace_write(start as *const u8, 0)); // 不可写

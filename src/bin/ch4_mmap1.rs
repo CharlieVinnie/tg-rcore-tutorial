@@ -15,7 +15,7 @@ extern "C" fn main() -> i32 {
     let start: usize = 0x10000000;
     let len: usize = 4096;
     let prot: usize = 1; // 只读
-    assert_eq!(0, mmap(start, len, prot));
+    assert_eq!(0, mmap(start, len, prot, 34, usize::MAX, 0));
     let addr: *mut u8 = start as *mut u8;
     unsafe {
         *addr = start as u8; // 尝试写入只读页，应该触发异常
