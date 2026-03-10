@@ -320,9 +320,9 @@ pub fn trace(trace_request: usize, id: usize, data: usize) -> isize {
 
 /// 映射内存。
 #[inline]
-pub fn mmap(start: usize, len: usize, prot: usize) -> isize {
+pub fn mmap(start: usize, len: usize, prot: usize, flags: usize, fd: usize, offset: usize) -> isize {
     // SAFETY: 系统调用参数是简单的整数值
-    unsafe { syscall6(SyscallId::MMAP, start, len, prot, 0, 0, 0) }
+    unsafe { syscall6(SyscallId::MMAP, start, len, prot, flags, fd, offset) }
 }
 
 /// 取消内存映射。
