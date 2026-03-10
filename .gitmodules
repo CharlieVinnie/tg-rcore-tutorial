@@ -90,3 +90,6 @@
 	path = tg-rcore-tutorial-console
 	url = git@github.com:rcore-os/tg-rcore-tutorial-console.git
 	branch = test
+[submodule "tg-rcore-tutorial-driver"]
+	path = tg-rcore-tutorial-driver
+	url = ./tg-rcore-tutorial-driver
