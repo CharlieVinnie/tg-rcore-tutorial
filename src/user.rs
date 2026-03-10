@@ -86,6 +86,15 @@ pub fn fstat(fd: usize, st: &mut Stat) -> isize {
     unsafe { syscall2(SyscallId::FSTAT, fd, st as *const _ as usize) }
 }
 
+/// 控制设备。
+///
+/// see <https://man7.org/linux/man-pages/man2/ioctl.2.html>.
+#[inline]
+pub fn ioctl(fd: usize, request: usize, argp: usize) -> isize {
+    // SAFETY: 系统调用参数是简单的整数值或由调用者保证的指针
+    unsafe { syscall3(SyscallId::IOCTL, fd, request, argp) }
+}
+
 /// 退出当前进程。
 ///
 /// see <https://man7.org/linux/man-pages/man2/exit.2.html>.
