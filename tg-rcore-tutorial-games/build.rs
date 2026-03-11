@@ -1,0 +1,46 @@
+fn main() {
+    use std::{env, fs, path::PathBuf};
+
+    println!("cargo:rerun-if-changed=src");
+    println!("cargo:rerun-if-changed=src/games/ch1b_os.rs");
+
+    println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-env-changed=LOG");
+    println!("cargo:rerun-if-env-changed=BASE_ADDRESS");
+    println!("cargo:rerun-if-env-changed=CHAPTER");
+
+    if let Ok(chapter) = env::var("CHAPTER") {
+        println!("cargo:rustc-env=CHAPTER={chapter}");
+    }
+
+    if let Ok(base) = env::var("BASE_ADDRESS")
+    {
+        let text = format!(
+            "\
+OUTPUT_ARCH(riscv)
+ENTRY(_start)
+SECTIONS {{
+    . = {base};
+    .text : {{
+        *(.text.entry)
+        *(.text .text.*)
+    }}
+    .rodata : {{
+        *(.rodata .rodata.*)
+        *(.srodata .srodata.*)
+    }}
+    .data : {{
+        *(.data .data.*)
+        *(.sdata .sdata.*)
+    }}
+    .bss : {{
+        *(.bss .bss.*)
+        *(.sbss .sbss.*)
+    }}
+}}"
+        );
+        let ld = PathBuf::from(env::var_os("OUT_DIR").unwrap()).join("linker.ld");
+        fs::write(&ld, text).unwrap();
+        println!("cargo:rustc-link-arg=-T{}", ld.display());
+    }
+}
