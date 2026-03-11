@@ -64,7 +64,7 @@ unsafe extern "C" fn _start() -> ! {
 /// 然后调用 `shutdown` 正常关机退出 QEMU。
 use riscv::register::{sepc, sstatus, scause};
 use core::arch::asm;
-use tg_rcore_tutorial_driver::{GpuDevice, VirtIOGpuWrapper};
+use tg_driver::{GpuDevice, VirtIOGpuWrapper};
 use virtio_drivers::{Hal, VirtIOHeader};
 
 core::arch::global_asm!(include_str!(env!("APP_ASM")));
