@@ -86,7 +86,7 @@ pub unsafe fn transfer(region: &'static mut [u8]) {
     // 将一段“现成内存”并入堆。常用于把启动后可回收区域纳入分配器管理。
     let ptr = NonNull::new(region.as_mut_ptr()).unwrap();
     // SAFETY: 由调用者保证内存块有效且不重叠
-    heap_mut().transfer(ptr, region.len());
+    unsafe { heap_mut().transfer(ptr, region.len()); }
 }
 
 /// 堆分配器。
@@ -134,6 +134,6 @@ unsafe impl GlobalAlloc for Global {
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         // SAFETY: 通过 heap_mut() 访问分配器，在单处理器环境下不会有并发的释放请求。
         // ptr 和 layout 的有效性由调用者保证（必须是之前 alloc 返回的）。
-        heap_mut().deallocate_layout(NonNull::new(ptr).unwrap(), layout)
+        unsafe { heap_mut().deallocate_layout(NonNull::new(ptr).unwrap(), layout) }
     }
 }

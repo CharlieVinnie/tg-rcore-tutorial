@@ -1,0 +1,1 @@
++ tg-rcore-tutorial-ch2/src/main.rs L135: `fence.i` 应当在 copy 完用户程序后立即执行

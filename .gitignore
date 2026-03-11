@@ -28,3 +28,7 @@ Cargo.lock
 # bundle/submodules.tar.gz
 # Extracted workspace (optional - uncomment if you want to ignore extracted content)
 # workspace-full/
+
+rCore-Tutorial-v3
+virtio-drivers
+tg-rcore-tutorial-game-demo
