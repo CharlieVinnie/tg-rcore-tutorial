@@ -93,3 +93,6 @@
 [submodule "tg-rcore-tutorial-driver"]
 	path = tg-rcore-tutorial-driver
 	url = ./tg-rcore-tutorial-driver
+[submodule "tg-rcore-tutorial-games"]
+	path = tg-rcore-tutorial-games
+	url = ./tg-rcore-tutorial-games
