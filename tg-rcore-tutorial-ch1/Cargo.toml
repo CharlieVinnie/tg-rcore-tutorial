@@ -19,4 +19,9 @@ panic = "abort"
 panic = "abort"
 
 [dependencies]
+spin = "0.9"
 tg-sbi = { package = "tg-rcore-tutorial-sbi", path = "../tg-rcore-tutorial-sbi", version = "0.4.5", features = ["nobios"] }
+riscv = "0.11"
+virtio-drivers = "0.1.0"
+tg-rcore-tutorial-driver = { path = "../tg-rcore-tutorial-driver" }
+buddy_system_allocator = "0.9"

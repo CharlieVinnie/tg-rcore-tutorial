@@ -5,12 +5,19 @@ target = "riscv64gc-unknown-none-elf"
 
 # QEMU 运行器配置
 # cargo run 时自动调用此命令执行编译产物
-# 等价于：qemu-system-riscv64 -machine virt -nographic -bios none -kernel <编译产物>
+# 等价于：qemu-system-riscv64 ... -kernel <编译产物>
 [target.riscv64gc-unknown-none-elf]
 runner = [
     "qemu-system-riscv64",
     "-machine", "virt",       # 使用 QEMU virt 虚拟平台
-    "-nographic",             # 无图形界面，输出重定向到终端
+    "-device", "virtio-gpu-device,xres=800,yres=600", # 启用 VirtIO GPU
+    "-display", "sdl",
+    "-serial", "stdio",       # 保证控制台继续输出到终端
     "-bios", "none",          # 不加载外部 BIOS/SBI 固件（tg-sbi 内建）
     "-kernel",                # 后接 ELF 可执行文件路径（由 cargo 自动填充）
 ]
+
+[env]
+TG_GAMES_CRATE = "tg-rcore-tutorial-games"
+TG_GAMES_LOCAL_DIR = "tg-rcore-tutorial-games"
+TG_GAMES_VERSION = "0.1.0"
