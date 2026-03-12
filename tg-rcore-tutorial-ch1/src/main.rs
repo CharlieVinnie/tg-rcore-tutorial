@@ -64,8 +64,8 @@ unsafe extern "C" fn _start() -> ! {
 /// 然后调用 `shutdown` 正常关机退出 QEMU。
 use riscv::register::{sepc, sstatus, scause};
 use core::arch::asm;
-use tg_driver::{GpuDevice, VirtIOGpuWrapper};
-use virtio_drivers::{Hal, VirtIOHeader};
+use tg_driver::{DeviceManager};
+use virtio_drivers::{Hal};
 
 core::arch::global_asm!(include_str!(env!("APP_ASM")));
 
@@ -115,7 +115,7 @@ impl Hal for HalImpl {
     fn virt_to_phys(vaddr: usize) -> usize { vaddr }
 }
 
-static GPU: Once<VirtIOGpuWrapper<HalImpl>> = Once::new();
+static DEVICES: Once<DeviceManager> = Once::new();
 
 use core::fmt::{self, Write};
 
@@ -285,21 +285,7 @@ extern "C" fn rust_main() -> ! {
     init_heap();
     println!("Hello to Tangram OS!");
 
-    // 1. Initialize GPU
-    // Standard VirtIO MMIO region on QEMU RISC-V usually starts at 0x1000_1000
-    for addr in (0x1000_1000..=0x1000_8000).step_by(0x1000) {
-        let header = unsafe { &mut *(addr as *mut VirtIOHeader) };
-        if let Ok(g) = VirtIOGpuWrapper::<HalImpl>::new(header) {
-            println!("Found VirtIO GPU at {:#x}!", addr);
-            GPU.call_once(|| g);
-            break;
-        }
-    }
-
-    if !GPU.is_completed() {
-        println!("No VirtIO GPU found!");
-        shutdown(true);
-    }
+    DEVICES.call_once(DeviceManager::new::<HalImpl>);
 
     // 2. Load User App
     unsafe extern "C" {
@@ -368,13 +354,13 @@ pub unsafe extern "C" fn trap_handler(
                     3 // return 3 based on user POSIX feedback
                 }
                 222 => { // mmap
-                    let gpu = GPU.get().unwrap();
+                    let gpu = DEVICES.get().unwrap().get_gpu().unwrap();
                     gpu.get_framebuffer().as_mut_ptr() as usize
                 }
                 29 => { // ioctl
                     let req = a1;
                     if req == 1 { // FB_FLUSH
-                        let gpu = GPU.get().unwrap();
+                        let gpu = DEVICES.get().unwrap().get_gpu().unwrap();
                         gpu.flush();
                     }
                     0

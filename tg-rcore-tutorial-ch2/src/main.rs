@@ -16,8 +16,8 @@ use tg_syscall::{Caller, SyscallId};
 
 use spin::Once;
 use buddy_system_allocator::LockedHeap;
-use tg_driver::VirtIOGpuWrapper;
-use virtio_drivers::{Hal, VirtIOHeader};
+use tg_driver::{DeviceManager};
+use virtio_drivers::{Hal};
 
 #[global_allocator]
 static HEAP_ALLOCATOR: LockedHeap<32> = LockedHeap::empty();
@@ -55,7 +55,7 @@ impl Hal for HalImpl {
     fn virt_to_phys(vaddr: usize) -> usize { vaddr }
 }
 
-static GPU: Once<VirtIOGpuWrapper<HalImpl>> = Once::new();
+static DEVICES: Once<DeviceManager> = Once::new();
 
 #[cfg(target_arch = "riscv64")]
 core::arch::global_asm!(include_str!(env!("APP_ASM")));
@@ -90,19 +90,8 @@ extern "C" fn rust_main() -> ! {
     println!("End of kernel is {:#x}", __end as *const () as usize);
 
     init_heap();
-    for addr in (0x1000_1000..=0x1000_8000).step_by(0x1000) {
-        let header = unsafe { &mut *(addr as *mut VirtIOHeader) };
-        if let Ok(g) = VirtIOGpuWrapper::<HalImpl>::new(header) {
-            println!("Found VirtIO GPU at {:#x}!", addr);
-            GPU.call_once(|| g);
-            break;
-        }
-    }
-
-    if !GPU.is_completed() {
-        println!("No VirtIO GPU found!");
-        tg_sbi::shutdown(true);
-    }
+    
+    DEVICES.call_once(DeviceManager::new::<HalImpl>);
 
     tg_syscall::init_io(&SyscallContext);
     tg_syscall::init_process(&SyscallContext);
@@ -184,7 +173,6 @@ fn handle_syscall(ctx: &mut LocalContext) -> SyscallResult {
 
 mod impls {
     use tg_syscall::{STDDEBUG, STDOUT};
-    use tg_driver::GpuDevice;
 
     pub struct Console;
 
@@ -228,7 +216,7 @@ mod impls {
 
         fn ioctl(&self, _caller: tg_syscall::Caller, _fd: usize, request: usize, _argp: usize) -> isize {
             if request == 1 { // FB_FLUSH
-                if let Some(gpu) = crate::GPU.get() {
+                if let Some(gpu) = crate::DEVICES.get().unwrap().get_gpu() {
                     gpu.flush();
                 }
             }
@@ -247,7 +235,7 @@ mod impls {
             _fd: i32,
             _offset: usize,
         ) -> isize {
-            if let Some(gpu) = crate::GPU.get() {
+            if let Some(gpu) = crate::DEVICES.get().unwrap().get_gpu() {
                 gpu.get_framebuffer().as_mut_ptr() as isize
             } else {
                 -1
