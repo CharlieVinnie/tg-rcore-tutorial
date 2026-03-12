@@ -11,7 +11,7 @@ use impls::{Console, SyscallContext};
 use riscv::register::*;
 use tg_console::log;
 use tg_kernel_context::LocalContext;
-use tg_sbi;
+use tg_sbi::{self, console_getchar};
 use tg_syscall::{Caller, SyscallId};
 
 use spin::Once;
@@ -81,9 +81,13 @@ unsafe extern "C" fn _start() -> ! {
 extern "C" fn rust_main() -> ! {
     unsafe { tg_linker::KernelLayout::locate().zero_bss() };
 
+    unsafe extern "C"  { fn __end(); }
+    
     tg_console::init_console(&Console);
     tg_console::set_log_level(option_env!("LOG"));
     tg_console::test_log();
+    
+    println!("End of kernel is {:#x}", __end as *const () as usize);
 
     init_heap();
     for addr in (0x1000_1000..=0x1000_8000).step_by(0x1000) {
@@ -103,8 +107,6 @@ extern "C" fn rust_main() -> ! {
     tg_syscall::init_io(&SyscallContext);
     tg_syscall::init_process(&SyscallContext);
     tg_syscall::init_memory(&SyscallContext);
-
-    println!("hello?");
 
     for (i, app) in tg_linker::AppMeta::locate().iter().enumerate() {
         let app_base = app.as_ptr() as usize;
@@ -142,6 +144,9 @@ extern "C" fn rust_main() -> ! {
         let _ = core::hint::black_box(&user_stack);
         println!();
     }
+
+    println!("Press any key to exit...");
+    console_getchar();
 
     tg_sbi::shutdown(false)
 }

@@ -144,9 +144,15 @@ fn write_app_asm(path: &PathBuf, base: u64, step: u64, bins: &[PathBuf]) {
     let mut asm = fs::File::create(path)
         .unwrap_or_else(|err| panic!("failed to create {}: {}", path.display(), err));
 
+    let version_id = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+
     writeln!(
         asm,
         "\
+# Version Id: {version_id}
 .global apps
 .section .data
 .align 3
