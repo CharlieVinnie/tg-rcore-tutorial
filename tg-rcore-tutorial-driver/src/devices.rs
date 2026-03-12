@@ -71,12 +71,12 @@ impl DeviceManager {
                     }
                 }
                 DeviceType::Input if manager.keyboard.is_none() => {
-                    if let Ok(mouse) = VirtIOInputWrapper::<H>::new(transport, OverflowStrategy::DropOldest) {
-                        let mouse = Arc::new(mouse);
-                        manager.keyboard = Some(mouse.clone());
-                        manager.irq_map.insert(slot, mouse.clone() as _);
+                    if let Ok(keyboard) = VirtIOInputWrapper::<H>::new(transport, OverflowStrategy::DropOldest) {
+                        let keyboard = Arc::new(keyboard);
+                        manager.keyboard = Some(keyboard.clone());
+                        manager.irq_map.insert(slot, keyboard.clone() as _);
                         setup_interrupt_for(slot);
-                        println!("Mouse device found at slot {slot}");
+                        println!("Keyboard device found at slot {slot}");
                     }
                 }
                 _ => {}
