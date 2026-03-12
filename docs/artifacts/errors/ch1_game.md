@@ -87,6 +87,8 @@ Would you like me to take a look at your `TRAP_CONTEXT` saving and restoring log
 
 Kernel stack is too SMALL.
 
+Kernel stack got busted tooooooo much that guard bytes weren't even written over.
+
 ---
 ---
 ---

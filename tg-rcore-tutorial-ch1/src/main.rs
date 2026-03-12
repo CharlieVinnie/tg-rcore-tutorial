@@ -43,7 +43,7 @@ use spin::Once;
 #[unsafe(no_mangle)]
 #[unsafe(link_section = ".text.entry")]
 unsafe extern "C" fn _start() -> ! {
-    const STACK_SIZE: usize = 8 * 4096;
+    const STACK_SIZE: usize = 16 * 4096;
 
     // 在 .bss.uninit 段中分配栈空间
     #[unsafe(link_section = ".boot.stack")]
@@ -74,7 +74,7 @@ use buddy_system_allocator::LockedHeap;
 #[global_allocator]
 static HEAP_ALLOCATOR: LockedHeap<32> = LockedHeap::empty();
 
-const HEAP_SIZE: usize = 0x20000;
+const HEAP_SIZE: usize = 0x40000;
 
 #[repr(align(4096))]
 struct HeapSpace([u8; HEAP_SIZE]);
@@ -285,7 +285,6 @@ extern "C" fn rust_main() -> ! {
     init_heap();
     println!("Hello to Tangram OS!");
 
-    DEVICES.call_once(DeviceManager::new::<HalImpl>);
 
     // 2. Load User App
     unsafe extern "C" {
@@ -298,6 +297,8 @@ extern "C" fn rust_main() -> ! {
     let user_base = 0x80600000;
 
     let app_size = user_app_end as *const () as usize - user_app_start as *const () as usize;
+
+    DEVICES.call_once(DeviceManager::new::<HalImpl>);
 
     unsafe {
         let src = core::slice::from_raw_parts(user_app_start as *const u8, app_size);
