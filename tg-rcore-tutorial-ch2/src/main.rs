@@ -8,7 +8,7 @@
 extern crate tg_console;
 
 use impls::{Console, SyscallContext};
-use riscv::register::*;
+use riscv::register::{scause::Interrupt, *};
 use tg_console::log;
 use tg_kernel_context::LocalContext;
 use tg_sbi::{self, console_getchar};
@@ -124,6 +124,9 @@ extern "C" fn rust_main() -> ! {
                             log::error!("app{i} call an unsupported syscall {:?}", id)
                         }
                     }
+                }
+                Trap::Interrupt(Interrupt::SupervisorExternal) => {
+                    DEVICES.get().unwrap().handle_external_interrupt();
                 }
                 trap => log::error!("app{i} was killed because of {trap:?}"),
             }
