@@ -12,3 +12,5 @@ mod qemu;
 pub use devices::DeviceManager;
 
 pub use gpu::{GpuDevice, VirtIOGpuWrapper};
+
+pub use virtio_drivers::Hal;
