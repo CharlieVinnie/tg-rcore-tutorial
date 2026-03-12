@@ -21,7 +21,7 @@ cases = [
 base = 0x8060_0000
 step = 0x0020_0000
 cases = [
-    "ch1b_os"
+    "ch3b_snake"
 ]
 
 [ch4]
