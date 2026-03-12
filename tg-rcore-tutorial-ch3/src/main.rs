@@ -28,6 +28,8 @@
 
 // 任务管理模块：定义任务控制块（TCB）和调度事件
 mod task;
+mod alloc;
+mod device_manager;
 
 // 引入控制台输出宏（print! / println!），由 tg_console 库提供
 #[macro_use]
@@ -43,6 +45,9 @@ use task::TaskControlBlock;
 use tg_console::log;
 // SBI 调用：set_timer、console_putchar、shutdown 等
 use tg_sbi;
+use device_manager::{DEVICES, init_devices};
+
+use crate::alloc::init_heap;
 
 // ========== 启动相关 ==========
 
@@ -102,6 +107,10 @@ extern "C" fn rust_main() -> ! {
     tg_syscall::init_scheduling(&SyscallContext);
     tg_syscall::init_clock(&SyscallContext);
     tg_syscall::init_trace(&SyscallContext);
+    tg_syscall::init_memory(&SyscallContext);
+
+    init_heap();
+    init_devices();
 
     // 第四步：初始化任务控制块数组，加载所有用户程序
     let mut tcbs = [TaskControlBlock::ZERO; APP_CAPACITY];
@@ -169,6 +178,10 @@ extern "C" fn rust_main() -> ! {
                             }
                         }
                     }
+                    Trap::Interrupt(Interrupt::SupervisorExternal) => {
+                        DEVICES.get().unwrap().handle_external_interrupt();
+                        true
+                    }
                     // ─── 其他异常（如非法指令、页错误等）：杀死应用 ───
                     Trap::Exception(e) => {
                         log::error!("app{i} was killed by {e:?}");
@@ -193,6 +206,10 @@ extern "C" fn rust_main() -> ! {
         i = (i + 1) % index_mod;
     }
 
+    print!("Press any key to exit...");
+    tg_sbi::console_getchar();
+    println!("");
+
     // 所有用户程序执行完毕，关机
     tg_sbi::shutdown(false)
 }
@@ -212,6 +229,8 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
 mod impls {
     use tg_syscall::*;
 
+    use crate::device_manager::DEVICES;
+
     /// 控制台实现：通过 SBI 逐字符输出
     pub struct Console;
 
@@ -224,6 +243,10 @@ mod impls {
 
     /// 系统调用上下文实现
     pub struct SyscallContext;
+
+    const GPU_FD: usize = 3;
+    const FB_FLUSH: usize = 1;
+    const FB_GET_RESOLUTION: usize = 2;
 
     /// IO 系统调用实现：处理 write 系统调用
     impl IO for SyscallContext {
@@ -245,6 +268,68 @@ mod impls {
                     -1
                 }
             }
+        }
+
+        /// hardcoded to return GPU fd
+        fn open(&self, _caller: tg_syscall::Caller, _path: usize, _flags: usize) -> isize {
+            GPU_FD as _
+        }
+
+        fn ioctl(&self, _caller: tg_syscall::Caller, fd: usize, request: usize, argp: usize) -> isize {
+            match fd {
+                GPU_FD => {
+                    let Some(gpu) = DEVICES.get().unwrap().get_gpu() else {
+                        tg_console::log::error!("GPU not initialized");
+                        return -1;
+                    };
+                    match request {
+                        FB_FLUSH => {
+                            gpu.flush();
+                            0
+                        }
+                        FB_GET_RESOLUTION => {
+                            let (w, h) = gpu.resolution();
+                            let res_ptr = argp as *mut usize;
+                            unsafe {
+                                res_ptr.write_volatile(w);
+                                res_ptr.add(1).write_volatile(h);
+                            }
+                            0
+                        }
+                        _ => {
+                            tg_console::log::error!("unsupported request: {request}");
+                            -1
+                        }
+                    }
+                }
+                _ => {
+                    tg_console::log::error!("unsupported fd: {fd}");
+                    -1
+                }
+            }
+        }
+    }
+
+    impl tg_syscall::Memory for SyscallContext {
+        fn mmap(
+            &self,
+            _caller: tg_syscall::Caller,
+            _addr: usize,
+            _length: usize,
+            _prot: i32,
+            _flags: i32,
+            _fd: i32,
+            _offset: usize,
+        ) -> isize {
+            if let Some(gpu) = crate::DEVICES.get().unwrap().get_gpu() {
+                gpu.get_framebuffer().as_mut_ptr() as isize
+            } else {
+                -1
+            }
+        }
+        
+        fn munmap(&self, _caller: tg_syscall::Caller, _addr: usize, _length: usize) -> isize {
+            0
         }
     }
 
