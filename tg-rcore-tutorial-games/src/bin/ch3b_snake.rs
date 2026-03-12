@@ -98,44 +98,71 @@ fn main() -> i32 {
 
     let mut dir = (1i32, 0i32); // Start moving right
     let mut next_dir = dir;
-    let mut prng = Prng { state: 12345 };
+    let mut prng = Prng { state: 1234567 };
     let mut food = (prng.next_range(0, GRID_W as u32) as i32, prng.next_range(0, GRID_H as u32) as i32);
     let mut score: u32 = 0;
     
-    // Busy loop delay configuration (adjust this depending on your CPU speed)
-    let delay_cycles: u32 = 5_000_000;
+    let delay_cycles: u32 = 10000;
+
+    // --- INITIAL RENDER ---
+    fill_background(fb_ptr);
+    draw_play_area(fb_ptr);
+    
+    for i in 0..snake_len {
+        draw_rect(fb_ptr, OFFSET_X + snake[i].0 as usize * CELL_SIZE, OFFSET_Y + snake[i].1 as usize * CELL_SIZE, CELL_SIZE, CELL_SIZE, COLOR_SNAKE);
+    }
+    draw_rect(fb_ptr, OFFSET_X + food.0 as usize * CELL_SIZE, OFFSET_Y + food.1 as usize * CELL_SIZE, CELL_SIZE, CELL_SIZE, COLOR_FOOD);
+    draw_number(fb_ptr, OFFSET_X, OFFSET_Y - 40, score, COLOR_BORDER);
+    
+    ioctl(fb_fd as usize, FB_FLUSH, 0);
+
+    // Add an input buffer right before the main loop starts
+    let mut input_buffer: [u16; 2] = [0, 0];
+    let mut input_count = 0;
 
     loop {
-        // --- 1. Process Input ---
-        // Drain events to get the latest keypress
-        loop {
+        // --- 1. Continuous Sub-tick Input Polling ---
+        // Instead of doing nothing during the delay, we constantly poll for input.
+        for _ in 0..delay_cycles {
             let mut event = InputEvent { timestamp_usec: 0, event_type: 0, code: 0, value: 0 };
             let event_slice = core::ptr::slice_from_raw_parts_mut(&mut event as *mut InputEvent as *mut u8, core::mem::size_of::<InputEvent>());
             let ret = unsafe { read(kb_fd as usize, &mut *event_slice) };
             
-            if ret <= 0 { break; } // No more events in the queue
-
-            println!("{:?}", event);
-
-            if event.event_type == EV_KEY && event.value == 1 { // Key press down
-                match event.code {
-                    KEY_UP | KEY_W    if dir.1 != 1  => next_dir = (0, -1),
-                    KEY_DOWN | KEY_S  if dir.1 != -1 => next_dir = (0, 1),
-                    KEY_LEFT | KEY_A  if dir.0 != 1  => next_dir = (-1, 0),
-                    KEY_RIGHT | KEY_D if dir.0 != -1 => next_dir = (1, 0),
-                    _ => {}
+            // If we detect a keypress, add it to our queue (max 2)
+            if ret > 0 && event.event_type == EV_KEY && event.value == 1 { 
+                if input_count < 2 {
+                    input_buffer[input_count] = event.code;
+                    input_count += 1;
                 }
             }
         }
-        dir = next_dir;
 
-        // --- 2. Update State ---
+        // --- 2. Process Buffered Input ---
+        // Only process ONE queued direction per grid movement
+        if input_count > 0 {
+            let code = input_buffer[0];
+            
+            // Shift the queue down
+            input_buffer[0] = input_buffer[1];
+            input_count -= 1;
+
+            // Notice the condition change: dir.1 == 0 means "if we are moving horizontally, we can only turn vertically"
+            match code {
+                KEY_UP | KEY_W    if dir.1 == 0 => dir = (0, -1),
+                KEY_DOWN | KEY_S  if dir.1 == 0 => dir = (0, 1),
+                KEY_LEFT | KEY_A  if dir.0 == 0 => dir = (-1, 0),
+                KEY_RIGHT | KEY_D if dir.0 == 0 => dir = (1, 0),
+                _ => {} // Invalid move (like trying to reverse), ignored
+            }
+        }
+
+        // --- 3. Update State ---
         let head = snake[0];
         let new_head = (head.0 + dir.0, head.1 + dir.1);
 
         // Check Wall Collision
         if new_head.0 < 0 || new_head.0 >= GRID_W as i32 || new_head.1 < 0 || new_head.1 >= GRID_H as i32 {
-            break; // Game Over
+            break; 
         }
 
         // Check Self Collision
@@ -143,7 +170,27 @@ fn main() -> i32 {
         for i in 0..snake_len {
             if new_head == snake[i] { self_collision = true; break; }
         }
-        if self_collision { break; } // Game over
+        if self_collision { break; } 
+
+        let old_tail = snake[snake_len - 1];
+        let mut ate_food = false;
+
+        // Check Food
+        if new_head == food {
+            ate_food = true;
+            if snake_len < MAX_SNAKE_LEN {
+                snake[snake_len] = old_tail; 
+                snake_len += 1;
+            }
+            score += 1;
+            
+            food = (prng.next_range(0, GRID_W as u32) as i32, prng.next_range(0, GRID_H as u32) as i32);
+            
+            draw_rect(fb_ptr, OFFSET_X + food.0 as usize * CELL_SIZE, OFFSET_Y + food.1 as usize * CELL_SIZE, CELL_SIZE, CELL_SIZE, COLOR_FOOD);
+            
+            fill_rect(fb_ptr, OFFSET_X, OFFSET_Y - 40, 120, 30, COLOR_BG);
+            draw_number(fb_ptr, OFFSET_X, OFFSET_Y - 40, score, COLOR_BORDER);
+        }
 
         // Move body
         for i in (1..snake_len).rev() {
@@ -151,40 +198,14 @@ fn main() -> i32 {
         }
         snake[0] = new_head;
 
-        // Check Food
-        if new_head == food {
-            if snake_len < MAX_SNAKE_LEN {
-                snake[snake_len] = snake[snake_len - 1]; // Grow tail
-                snake_len += 1;
-            }
-            score += 1;
-            
-            // Spawn new food (rudimentary logic: just ensure it spawns inside bounds)
-            food = (prng.next_range(0, GRID_W as u32) as i32, prng.next_range(0, GRID_H as u32) as i32);
+        // --- 4. Render Delta ---
+        if !ate_food {
+            draw_rect(fb_ptr, OFFSET_X + old_tail.0 as usize * CELL_SIZE, OFFSET_Y + old_tail.1 as usize * CELL_SIZE, CELL_SIZE, CELL_SIZE, COLOR_BG);
         }
 
-        // --- 3. Render ---
-        fill_background(fb_ptr);
-        draw_play_area(fb_ptr);
-        
-        // Draw Food
-        draw_rect(fb_ptr, OFFSET_X + food.0 as usize * CELL_SIZE, OFFSET_Y + food.1 as usize * CELL_SIZE, CELL_SIZE, CELL_SIZE, COLOR_FOOD);
-
-        // Draw Snake
-        for i in 0..snake_len {
-            draw_rect(fb_ptr, OFFSET_X + snake[i].0 as usize * CELL_SIZE, OFFSET_Y + snake[i].1 as usize * CELL_SIZE, CELL_SIZE, CELL_SIZE, COLOR_SNAKE);
-        }
-
-        // Draw Score
-        draw_number(fb_ptr, OFFSET_X, OFFSET_Y - 40, score, COLOR_BORDER);
+        draw_rect(fb_ptr, OFFSET_X + new_head.0 as usize * CELL_SIZE, OFFSET_Y + new_head.1 as usize * CELL_SIZE, CELL_SIZE, CELL_SIZE, COLOR_SNAKE);
 
         ioctl(fb_fd as usize, FB_FLUSH, 0);
-
-        // --- 4. Delay ---
-        // Simple busy wait. Adjust the limit depending on your system's processing speed
-        for i in 0..delay_cycles {
-            unsafe { core::ptr::read_volatile(&i); }
-        }
     }
 
     0
@@ -202,12 +223,10 @@ fn draw_play_area(fb: *mut u8) {
     let play_w = GRID_W * CELL_SIZE;
     let play_h = GRID_H * CELL_SIZE;
 
-    // Draw Grid
     for gy in 0..GRID_H {
         for gx in 0..GRID_W {
             let px = OFFSET_X + gx * CELL_SIZE;
             let py = OFFSET_Y + gy * CELL_SIZE;
-            // Draw cell outlines
             for i in 0..CELL_SIZE {
                 set_pixel(fb, px + i, py, COLOR_GRID);
                 set_pixel(fb, px, py + i, COLOR_GRID);
@@ -215,7 +234,6 @@ fn draw_play_area(fb: *mut u8) {
         }
     }
 
-    // Draw Border Line (1 pixel wide around the grid)
     for x in 0..=play_w {
         set_pixel(fb, OFFSET_X + x, OFFSET_Y - 1, COLOR_BORDER);
         set_pixel(fb, OFFSET_X + x, OFFSET_Y + play_h, COLOR_BORDER);
@@ -226,8 +244,16 @@ fn draw_play_area(fb: *mut u8) {
     }
 }
 
+// Fills a solid rectangle without an inset (used for clearing text)
+fn fill_rect(fb: *mut u8, x: usize, y: usize, w: usize, h: usize, color: (u8, u8, u8)) {
+    for dy in 0..h {
+        for dx in 0..w {
+            set_pixel(fb, x + dx, y + dy, color);
+        }
+    }
+}
+
 fn draw_rect(fb: *mut u8, x: usize, y: usize, w: usize, h: usize, color: (u8, u8, u8)) {
-    // Adding a 1-pixel inset so blocks look separated inside the grid
     let inset = 1;
     for dy in inset..(h - inset) {
         for dx in inset..(w - inset) {
@@ -262,9 +288,8 @@ fn draw_number(fb: *mut u8, mut x: usize, y: usize, mut num: u32, color: (u8, u8
         }
     }
 
-    let scale = 4; // Scale up the 3x5 font
+    let scale = 4;
 
-    // Draw digits in reverse (since we extracted them backwards)
     for i in (0..count).rev() {
         let d = digits[i] as usize;
         let bitmap = &DIGITS[d];
@@ -272,7 +297,6 @@ fn draw_number(fb: *mut u8, mut x: usize, y: usize, mut num: u32, color: (u8, u8
         for row in 0..5 {
             for col in 0..3 {
                 if bitmap[row * 3 + col] == 1 {
-                    // Draw a scaled pixel block
                     for dy in 0..scale {
                         for dx in 0..scale {
                             set_pixel(fb, x + col * scale + dx, y + row * scale + dy, color);
@@ -281,6 +305,6 @@ fn draw_number(fb: *mut u8, mut x: usize, y: usize, mut num: u32, color: (u8, u8
                 }
             }
         }
-        x += 4 * scale; // Spacing between digits
+        x += 4 * scale;
     }
 }
