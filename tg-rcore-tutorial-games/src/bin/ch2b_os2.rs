@@ -18,6 +18,9 @@ fn main() -> i32 {
 
     let fb_ptr = fb_base as *mut u8;
 
+    if(SHAPE_ID == 0) {
+        fill_background(fb_ptr);
+    }
     draw_shape(fb_ptr, SHAPE_ID);
 
     ioctl(fd as usize, FB_FLUSH, 0);
@@ -60,7 +63,7 @@ fn is_inside(x: i32, y: i32, points: &[(i32, i32)]) -> bool {
     inside
 }
 
-fn draw_shape(fb: *mut u8, shape_id: usize) {
+fn fill_background(fb: *mut u8) {
     let width = 800;
 
     // Fill background (Dark grey 0x333333)
@@ -75,6 +78,10 @@ fn draw_shape(fb: *mut u8, shape_id: usize) {
             }
         }
     }
+} 
+
+fn draw_shape(fb: *mut u8, shape_id: usize) {
+    let width = 800;
 
     let &(points, color) = &TANGRAM_POLYGONS[shape_id];
 
