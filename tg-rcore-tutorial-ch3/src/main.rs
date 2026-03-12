@@ -180,7 +180,7 @@ extern "C" fn rust_main() -> ! {
                     }
                     Trap::Interrupt(Interrupt::SupervisorExternal) => {
                         DEVICES.get().unwrap().handle_external_interrupt();
-                        true
+                        false
                     }
                     // ─── 其他异常（如非法指令、页错误等）：杀死应用 ───
                     Trap::Exception(e) => {
@@ -227,6 +227,7 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
 
 /// 各依赖库所需接口的具体实现
 mod impls {
+    use tg_driver::InputEvent;
     use tg_syscall::*;
 
     use crate::device_manager::DEVICES;
@@ -245,6 +246,7 @@ mod impls {
     pub struct SyscallContext;
 
     const GPU_FD: usize = 3;
+    const KEYBOARD_FD: usize = 4;
     const FB_FLUSH: usize = 1;
     const FB_GET_RESOLUTION: usize = 2;
 
@@ -270,9 +272,50 @@ mod impls {
             }
         }
 
-        /// hardcoded to return GPU fd
-        fn open(&self, _caller: tg_syscall::Caller, _path: usize, _flags: usize) -> isize {
-            GPU_FD as _
+        fn read(&self, _caller: Caller, fd: usize, buf: usize, count: usize) -> isize {
+            match fd {
+                KEYBOARD_FD => {
+                    let Some(keyboard) = DEVICES.get().unwrap().get_keyboard() else {
+                        tg_console::log::error!("Keyboard not initialized");
+                        return -1;
+                    };
+                    let mut ptr = buf;
+                    let mut read_count = 0;
+                    while read_count + core::mem::size_of::<InputEvent>() <= count {
+                        let Some(event) = keyboard.read_event() else { break; };
+                        let event_ptr = ptr as *mut InputEvent;
+                        unsafe { event_ptr.write_volatile(event); }
+                        ptr += core::mem::size_of::<InputEvent>();
+                        read_count += core::mem::size_of::<InputEvent>();
+                    }
+                    // println!("Read count is {}", read_count);
+                    read_count as isize
+                }
+                _ => {
+                    tg_console::log::error!("unsupported fd: {fd}");
+                    -1
+                }
+            }
+        }
+
+        fn open(&self, _caller: tg_syscall::Caller, path: usize, _flags: usize) -> isize {
+            // We can only read from user in this way now
+            let mut count = 0;
+            unsafe {
+                while *((path + count) as *const u8) != 0 {
+                    count += 1;
+                }
+            }
+            let path_str = unsafe { core::str::from_utf8_unchecked(core::slice::from_raw_parts(path as *const u8, count)) };
+            println!("path_str is {}", path_str);
+            // hardcoded paths
+            if path_str == "/dev/fb0" {
+                GPU_FD as isize
+            } else if path_str == "/dev/input0" {
+                KEYBOARD_FD as isize
+            } else {
+                -1
+            }
         }
 
         fn ioctl(&self, _caller: tg_syscall::Caller, fd: usize, request: usize, argp: usize) -> isize {

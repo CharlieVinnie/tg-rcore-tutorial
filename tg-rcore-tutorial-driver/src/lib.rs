@@ -8,9 +8,12 @@ mod devices;
 mod plic;
 mod buffer;
 mod qemu;
+mod clock;
 
 pub use devices::DeviceManager;
 
 pub use gpu::{GpuDevice, VirtIOGpuWrapper};
+
+pub use input::{InputEvent};
 
 pub use virtio_drivers::Hal;

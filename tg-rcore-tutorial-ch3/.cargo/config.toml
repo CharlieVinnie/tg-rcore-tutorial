@@ -10,6 +10,7 @@ runner = [
     "qemu-system-riscv64",
     "-machine", "virt",       # 使用 QEMU virt 虚拟平台
     "-device", "virtio-gpu-device,xres=800,yres=600", # 启用 VirtIO GPU
+    "-device", "virtio-keyboard-device",
     "-display", "sdl",
     "-d", "in_asm",
     "-D", "qemu.log",

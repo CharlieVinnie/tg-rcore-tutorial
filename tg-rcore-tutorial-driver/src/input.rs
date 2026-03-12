@@ -4,11 +4,20 @@ use core::any::Any;
 use spin::Mutex;
 use virtio_drivers::{Hal, MmioTransport, VirtIOInput};
 
-use crate::{buffer::RingBuffer, devices::Device};
+use crate::{buffer::RingBuffer, clock, devices::Device};
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct InputEvent {
+    pub timestamp: u64,
+    pub event_type: u16,
+    pub code: u16,
+    pub value: u32,
+}
 
 struct VirtIOInputInner<H: Hal> {
     virtio_input: VirtIOInput<H, MmioTransport>,
-    events: RingBuffer<u64, 128>, // TODO: configurable
+    events: RingBuffer<InputEvent, 128>, // TODO: configurable
 }
 
 pub struct VirtIOInputWrapper<H: Hal> {
@@ -16,7 +25,7 @@ pub struct VirtIOInputWrapper<H: Hal> {
 }
 
 pub trait InputDevice: Device + Send + Sync + Any {
-    fn read_event(&self) -> Option<u64>;
+    fn read_event(&self) -> Option<InputEvent>;
     fn is_empty(&self) -> bool;
 }
 
@@ -40,22 +49,24 @@ impl<H: Hal + 'static> InputDevice for VirtIOInputWrapper<H> {
         self.inner.lock().events.is_empty()
     }
 
-    fn read_event(&self) -> Option<u64> {
+    fn read_event(&self) -> Option<InputEvent> {
         self.inner.lock().events.pop()
     }
 }
 
 impl<H: Hal + 'static> Device for VirtIOInputWrapper<H> {
     fn handle_irq(&self) {
-        let mut result;
         // TODO: exclusive_session?
         let mut inner = self.inner.lock();
 
         inner.virtio_input.ack_interrupt();
         while let Some(event) = inner.virtio_input.pop_pending_event() {
-            result = (event.event_type as u64) << 48
-                | (event.code as u64) << 32
-                | (event.value) as u64;
+            let result = InputEvent {
+                timestamp: clock::get_time_us() as u64,
+                event_type: event.event_type,
+                code: event.code,
+                value: event.value
+            };
             let _ = inner.events.push(result);
         }
     }

@@ -96,6 +96,10 @@ impl DeviceManager {
         self.gpu.clone()
     }
 
+    pub fn get_keyboard(&self) -> Option<Arc<dyn InputDevice>> {
+        self.keyboard.clone()
+    }
+
     pub fn handle_external_interrupt(&self) {
         let Some(slot) = claim_irq() else { return; };
         self.get_device(slot).unwrap().handle_irq();
