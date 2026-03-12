@@ -1,7 +1,7 @@
 #![no_std]
 #![no_main]
 
-use games_lib::{OpenFlags, ioctl, mmap, open, println, read};
+use games_lib::{OpenFlags, get_time, ioctl, mmap, open, println, read};
 
 extern crate games_lib;
 
@@ -101,8 +101,6 @@ fn main() -> i32 {
     let mut prng = Prng { state: 1234567 };
     let mut food = (prng.next_range(0, GRID_W as u32) as i32, prng.next_range(0, GRID_H as u32) as i32);
     let mut score: u32 = 0;
-    
-    let delay_cycles: u32 = 10000;
 
     // --- INITIAL RENDER ---
     fill_background(fb_ptr);
@@ -121,21 +119,7 @@ fn main() -> i32 {
     let mut input_count = 0;
 
     loop {
-        // --- 1. Continuous Sub-tick Input Polling ---
-        // Instead of doing nothing during the delay, we constantly poll for input.
-        for _ in 0..delay_cycles {
-            let mut event = InputEvent { timestamp_usec: 0, event_type: 0, code: 0, value: 0 };
-            let event_slice = core::ptr::slice_from_raw_parts_mut(&mut event as *mut InputEvent as *mut u8, core::mem::size_of::<InputEvent>());
-            let ret = unsafe { read(kb_fd as usize, &mut *event_slice) };
-            
-            // If we detect a keypress, add it to our queue (max 2)
-            if ret > 0 && event.event_type == EV_KEY && event.value == 1 { 
-                if input_count < 2 {
-                    input_buffer[input_count] = event.code;
-                    input_count += 1;
-                }
-            }
-        }
+        let frame_start_time = get_time();
 
         // --- 2. Process Buffered Input ---
         // Only process ONE queued direction per grid movement
@@ -206,6 +190,20 @@ fn main() -> i32 {
         draw_rect(fb_ptr, OFFSET_X + new_head.0 as usize * CELL_SIZE, OFFSET_Y + new_head.1 as usize * CELL_SIZE, CELL_SIZE, CELL_SIZE, COLOR_SNAKE);
 
         ioctl(fb_fd as usize, FB_FLUSH, 0);
+
+        while get_time() < frame_start_time + 200 {
+            let mut event = InputEvent { timestamp_usec: 0, event_type: 0, code: 0, value: 0 };
+            let event_slice = core::ptr::slice_from_raw_parts_mut(&mut event as *mut InputEvent as *mut u8, core::mem::size_of::<InputEvent>());
+            let ret = unsafe { read(kb_fd as usize, &mut *event_slice) };
+            
+            // If we detect a keypress, add it to our queue (max 2)
+            if ret > 0 && event.event_type == EV_KEY && event.value == 1 { 
+                if input_count < 2 {
+                    input_buffer[input_count] = event.code;
+                    input_count += 1;
+                }
+            }
+        }
     }
 
     0
