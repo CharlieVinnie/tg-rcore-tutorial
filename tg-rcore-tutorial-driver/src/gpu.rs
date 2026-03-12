@@ -5,9 +5,11 @@ use core::any::Any;
 use embedded_graphics::pixelcolor::Rgb888;
 use spin::Mutex;
 use tinybmp::Bmp;
-use virtio_drivers::{Hal, MmioTransport, VirtIOGpu, VirtIOHeader};
+use virtio_drivers::{Hal, MmioTransport, VirtIOGpu};
 
-pub trait GpuDevice: Send + Sync + Any {
+use crate::devices::Device;
+
+pub trait GpuDevice: Device + Send + Sync + Any {
     fn get_framebuffer(&self) -> &mut [u8];
     fn resolution(&self) -> (usize, usize);
     fn flush(&self);
@@ -24,9 +26,7 @@ unsafe impl<H: Hal> Sync for VirtIOGpuWrapper<H> {}
 static BMP_DATA: &[u8] = include_bytes!("mouse.bmp");
 
 impl<H: Hal> VirtIOGpuWrapper<H> {
-    pub fn new(header: &'static mut VirtIOHeader) -> Result<Self, virtio_drivers::Error> {
-        let transport = unsafe { virtio_drivers::MmioTransport::new(core::ptr::NonNull::from(header)) }
-            .map_err(|_| virtio_drivers::Error::InvalidParam)?;
+    pub fn new(transport: MmioTransport) -> Result<Self, virtio_drivers::Error> {
         let mut virtio = VirtIOGpu::new(transport)?;
 
         let fbuffer = virtio.setup_framebuffer()?;
@@ -74,4 +74,8 @@ impl<H: Hal + 'static> GpuDevice for VirtIOGpuWrapper<H> {
             core::slice::from_raw_parts_mut(ptr, self.fb.len())
         }
     }
+}
+
+impl<H: Hal + 'static> Device for VirtIOGpuWrapper<H> {
+    fn handle_irq(&self) {}
 }

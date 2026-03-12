@@ -8,3 +8,5 @@ virtio-drivers = "0.1.0"
 embedded-graphics = "0.7"
 tinybmp = "0.3"
 spin = "0.9"
+riscv = "0.10"
+tg-console = { package = "tg-rcore-tutorial-console", path = "../tg-rcore-tutorial-console", version = "0.4.5" }

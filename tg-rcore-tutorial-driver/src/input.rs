@@ -1,76 +1,62 @@
-// /// This provides keyboard and mouse input
+/// This provides keyboard and mouse input
 
-// use core::any::Any;
-// use spin::Mutex;
-// use virtio_drivers::{MmioTransport, VirtIOHeader, VirtIOInput};
+use core::any::Any;
+use spin::Mutex;
+use virtio_drivers::{Hal, MmioTransport, VirtIOInput};
 
-// struct VirtIOInputInner {
-//     virtio_input: VirtIOInput<VirtioHal, MmioTransport>,
-//     events: VecDeque<u64>,
-// }
+use crate::{buffer::RingBuffer, devices::Device};
 
-// struct VirtIOInputWrapper {
-//     inner: Mutex<VirtIOInputInner>,
-//     condvar: Condvar,
-// }
+struct VirtIOInputInner<H: Hal> {
+    virtio_input: VirtIOInput<H, MmioTransport>,
+    events: RingBuffer<u64, 128>, // TODO: configurable
+}
 
-// pub trait InputDevice: Send + Sync + Any {
-//     fn read_event(&self) -> u64;
-//     fn handle_irq(&self);
-//     fn is_empty(&self) -> bool;
-// }
+pub struct VirtIOInputWrapper<H: Hal> {
+    inner: Mutex<VirtIOInputInner<H>>,
+}
 
-// impl VirtIOInputWrapper {
-//     pub fn new(header: &'static mut VirtIOHeader) -> Result<Self, virtio_drivers::Error> {
-//         let transport = unsafe { virtio_drivers::MmioTransport::new(core::ptr::NonNull::from(header)) }
-//             .map_err(|_| virtio_drivers::Error::InvalidParam)?;
+pub trait InputDevice: Device + Send + Sync + Any {
+    fn read_event(&self) -> Option<u64>;
+    fn is_empty(&self) -> bool;
+}
 
-//         let inner = VirtIOInputInner {
-//             virtio_input: unsafe {
-//                 VirtIOInput::<VirtioHal>::new(&mut *(addr as *mut VirtIOHeader)).unwrap()
-//             },
-//             events: VecDeque::new(),
-//         };
-//         Self {
-//             inner: unsafe { UPIntrFreeCell::new(inner) },
-//             condvar: Condvar::new(),
-//         }
-//     }
-// }
+impl<H: Hal> VirtIOInputWrapper<H> {
+    pub fn new(transport: MmioTransport, buffer_overflow_strategy: crate::buffer::OverflowStrategy) -> Result<Self, virtio_drivers::Error> {
+        let inner = VirtIOInputInner {
+            virtio_input: VirtIOInput::new(transport)?,
+            events: RingBuffer::new(buffer_overflow_strategy),
+        };
+        Ok(Self {
+            inner: Mutex::new(inner),
+        })
+    }
+}
 
-// impl InputDevice for VirtIOInputWrapper {
-//     fn is_empty(&self) -> bool {
-//         self.inner.exclusive_access().events.is_empty()
-//     }
+unsafe impl<H: Hal> Send for VirtIOInputWrapper<H> {}
+unsafe impl<H: Hal> Sync for VirtIOInputWrapper<H> {}
 
-//     fn read_event(&self) -> u64 {
-//         loop {
-//             let mut inner = self.inner.exclusive_access();
-//             if let Some(event) = inner.events.pop_front() {
-//                 return event;
-//             } else {
-//                 let task_cx_ptr = self.condvar.wait_no_sched();
-//                 drop(inner);
-//                 schedule(task_cx_ptr);
-//             }
-//         }
-//     }
+impl<H: Hal + 'static> InputDevice for VirtIOInputWrapper<H> {
+    fn is_empty(&self) -> bool {
+        self.inner.lock().events.is_empty()
+    }
 
-//     fn handle_irq(&self) {
-//         let mut count = 0;
-//         let mut result = 0;
-//         self.inner.exclusive_session(|inner| {
-//             inner.virtio_input.ack_interrupt();
-//             while let Some(event) = inner.virtio_input.pop_pending_event() {
-//                 count += 1;
-//                 result = (event.event_type as u64) << 48
-//                     | (event.code as u64) << 32
-//                     | (event.value) as u64;
-//                 inner.events.push_back(result);
-//             }
-//         });
-//         if count > 0 {
-//             self.condvar.signal();
-//         };
-//     }
-// }
+    fn read_event(&self) -> Option<u64> {
+        self.inner.lock().events.pop()
+    }
+}
+
+impl<H: Hal + 'static> Device for VirtIOInputWrapper<H> {
+    fn handle_irq(&self) {
+        let mut result;
+        // TODO: exclusive_session?
+        let mut inner = self.inner.lock();
+
+        inner.virtio_input.ack_interrupt();
+        while let Some(event) = inner.virtio_input.pop_pending_event() {
+            result = (event.event_type as u64) << 48
+                | (event.code as u64) << 32
+                | (event.value) as u64;
+            let _ = inner.events.push(result);
+        }
+    }
+}
