@@ -18,7 +18,7 @@ fn main() -> i32 {
 
     let fb_ptr = fb_base as *mut u8;
 
-    if(SHAPE_ID == 0) {
+    if SHAPE_ID == 0 {
         fill_background(fb_ptr);
     }
     draw_shape(fb_ptr, SHAPE_ID);
