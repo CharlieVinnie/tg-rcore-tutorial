@@ -1,7 +1,7 @@
 #![no_std]
 #![no_main]
 
-use games_lib::{OpenFlags, get_time, ioctl, mmap, open, println, read};
+use games_lib::{OpenFlags, get_time, ioctl, mmap, open, read};
 
 extern crate games_lib;
 
@@ -234,7 +234,6 @@ fn main() -> i32 {
     }
 
     let mut dir = (1i32, 0i32);
-    let mut next_dir = dir;
     let mut prng = Prng { state: 1234567 };
     
     // Use the safe spawn method
