@@ -356,13 +356,13 @@ pub unsafe extern "C" fn trap_handler(
                 }
                 222 => { // mmap
                     let gpu = DEVICES.get().unwrap().get_gpu().unwrap();
-                    gpu.get_framebuffer().as_mut_ptr() as usize
+                    gpu.get_framebuffer().unwrap().as_mut_ptr() as usize
                 }
                 29 => { // ioctl
                     let req = a1;
                     if req == 1 { // FB_FLUSH
                         let gpu = DEVICES.get().unwrap().get_gpu().unwrap();
-                        gpu.flush();
+                        gpu.flush().unwrap();
                     }
                     0
                 }

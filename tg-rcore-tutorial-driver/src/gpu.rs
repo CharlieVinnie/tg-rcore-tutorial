@@ -10,9 +10,9 @@ use virtio_drivers::{Hal, MmioTransport, VirtIOGpu};
 use crate::devices::Device;
 
 pub trait GpuDevice: Device + Send + Sync + Any {
-    fn get_framebuffer(&self) -> &mut [u8];
-    fn resolution(&self) -> (usize, usize);
-    fn flush(&self);
+    fn get_framebuffer(&self) -> Result<&mut [u8], virtio_drivers::Error>;
+    fn resolution(&self) -> Result<(u32, u32), virtio_drivers::Error>;
+    fn flush(&self) -> Result<(), virtio_drivers::Error>;
 }
 
 pub struct VirtIOGpuWrapper<H: Hal> {
@@ -58,20 +58,20 @@ impl<H: Hal> VirtIOGpuWrapper<H> {
 }
 
 impl<H: Hal + 'static> GpuDevice for VirtIOGpuWrapper<H> {
-    fn flush(&self) {
-        self.gpu.lock().flush().unwrap();
+    fn flush(&self) -> Result<(), virtio_drivers::Error> {
+        self.gpu.lock().flush()
     }
 
-    fn resolution(&self) -> (usize, usize) {
-        todo!()
+    fn resolution(&self) -> Result<(u32, u32), virtio_drivers::Error> {
+        self.gpu.lock().resolution()
     }
     
-    fn get_framebuffer(&self) -> &mut [u8] {
+    fn get_framebuffer(&self) -> Result<&mut [u8], virtio_drivers::Error> {
         // SAFETY: Mutating the framebuffer is safe because the framebuffer slice is not aliased
         // by the GPU device in a way that would cause data races on the CPU.
         unsafe {
             let ptr = self.fb.as_ptr() as *mut u8;
-            core::slice::from_raw_parts_mut(ptr, self.fb.len())
+            Ok(core::slice::from_raw_parts_mut(ptr, self.fb.len()))
         }
     }
 }

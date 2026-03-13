@@ -220,7 +220,7 @@ mod impls {
         fn ioctl(&self, _caller: tg_syscall::Caller, _fd: usize, request: usize, _argp: usize) -> isize {
             if request == 1 { // FB_FLUSH
                 if let Some(gpu) = crate::DEVICES.get().unwrap().get_gpu() {
-                    gpu.flush();
+                    gpu.flush().unwrap();
                 }
             }
             0
@@ -239,7 +239,7 @@ mod impls {
             _offset: usize,
         ) -> isize {
             if let Some(gpu) = crate::DEVICES.get().unwrap().get_gpu() {
-                gpu.get_framebuffer().as_mut_ptr() as isize
+                gpu.get_framebuffer().unwrap().as_mut_ptr() as isize
             } else {
                 -1
             }

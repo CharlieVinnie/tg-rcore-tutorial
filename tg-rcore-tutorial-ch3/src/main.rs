@@ -327,15 +327,15 @@ mod impls {
                     };
                     match request {
                         FB_FLUSH => {
-                            gpu.flush();
+                            gpu.flush().unwrap();
                             0
                         }
                         FB_GET_RESOLUTION => {
-                            let (w, h) = gpu.resolution();
-                            let res_ptr = argp as *mut usize;
+                            let (w, h) = gpu.resolution().unwrap();
+                            let res_ptr = argp as *mut u32;
                             unsafe {
-                                res_ptr.write_volatile(w);
-                                res_ptr.add(1).write_volatile(h);
+                                res_ptr.write_volatile(w as u32);
+                                res_ptr.add(1).write_volatile(h as u32);
                             }
                             0
                         }
@@ -365,7 +365,7 @@ mod impls {
             _offset: usize,
         ) -> isize {
             if let Some(gpu) = crate::DEVICES.get().unwrap().get_gpu() {
-                gpu.get_framebuffer().as_mut_ptr() as isize
+                gpu.get_framebuffer().unwrap().as_mut_ptr() as isize
             } else {
                 -1
             }
