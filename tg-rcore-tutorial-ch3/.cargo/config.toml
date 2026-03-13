@@ -9,7 +9,7 @@ target = "riscv64gc-unknown-none-elf"
 runner = [
     "qemu-system-riscv64",
     "-machine", "virt",       # 使用 QEMU virt 虚拟平台
-    "-device", "virtio-gpu-device,xres=800,yres=600", # 启用 VirtIO GPU
+    "-device", "virtio-gpu-device,xres=1024,yres=768", # 启用 VirtIO GPU
     "-device", "virtio-keyboard-device",
     "-display", "sdl",
     "-d", "in_asm",

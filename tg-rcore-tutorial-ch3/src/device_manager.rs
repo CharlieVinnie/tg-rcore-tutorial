@@ -7,9 +7,9 @@ impl Hal for HalImpl {
     fn dma_alloc(pages: usize) -> usize {
         #[repr(align(4096))]
         #[allow(dead_code)]
-        struct DmaBuffer([u8; 1024 * 1024 * 2]);
+        struct DmaBuffer([u8; 1024 * 1024 * 16]);
         #[allow(dead_code)]
-        static mut DMA_BUF: DmaBuffer = DmaBuffer([0; 1024 * 1024 * 2]);
+        static mut DMA_BUF: DmaBuffer = DmaBuffer([0; 1024 * 1024 * 16]);
         static mut OFFSET: usize = 0;
         unsafe {
             let base = core::ptr::addr_of_mut!(DMA_BUF) as usize;

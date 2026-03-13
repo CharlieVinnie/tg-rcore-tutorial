@@ -6,15 +6,12 @@ use games_lib::{OpenFlags, get_time, ioctl, mmap, open, println, read};
 extern crate games_lib;
 
 const FB_FLUSH: usize = 1;
+const FB_GET_RESOLUTION: usize = 2; // Note: Adjust this constant if your kernel uses a different number
 
-// Screen and Grid configurations
-const SCREEN_W: usize = 800;
-const SCREEN_H: usize = 600;
+// Grid configurations (Screen config removed for dynamic resolution)
 const CELL_SIZE: usize = 20;
 const GRID_W: usize = 20;
 const GRID_H: usize = 20;
-const OFFSET_X: usize = 100;
-const OFFSET_Y: usize = 100;
 
 // Maximum snake size (Grid width * Grid height)
 const MAX_SNAKE_LEN: usize = GRID_W * GRID_H;
@@ -61,7 +58,134 @@ impl Prng {
     }
 }
 
-// Simple 3x5 pixel font for digits 0-9 to render the score
+// Helper to spawn food avoiding the snake's body
+fn spawn_food(prng: &mut Prng, snake: &[(i32, i32)], snake_len: usize) -> (i32, i32) {
+    loop {
+        let fx = prng.next_range(0, GRID_W as u32) as i32;
+        let fy = prng.next_range(0, GRID_H as u32) as i32;
+        
+        let mut on_snake = false;
+        for i in 0..snake_len {
+            if snake[i] == (fx, fy) {
+                on_snake = true;
+                break;
+            }
+        }
+        
+        if !on_snake {
+            return (fx, fy);
+        }
+    }
+}
+
+// --- Framebuffer Wrapper ---
+// This bundles all the dynamic resolution data so we don't have to pass dimensions everywhere
+struct Display {
+    ptr: *mut u8,
+    w: usize,
+    h: usize,
+    offset_x: usize,
+    offset_y: usize,
+}
+
+impl Display {
+    fn set_pixel(&self, x: usize, y: usize, color: (u8, u8, u8)) {
+        if x >= self.w || y >= self.h { return; }
+        let offset = (y * self.w + x) * 4;
+        unsafe {
+            self.ptr.add(offset).write_volatile(color.2);     // B
+            self.ptr.add(offset + 1).write_volatile(color.1); // G
+            self.ptr.add(offset + 2).write_volatile(color.0); // R
+            self.ptr.add(offset + 3).write_volatile(0xff);    // A
+        }
+    }
+
+    fn fill_background(&self) {
+        for y in 0..self.h {
+            for x in 0..self.w {
+                self.set_pixel(x, y, COLOR_BG);
+            }
+        }
+    }
+
+    fn draw_play_area(&self) {
+        let play_w = GRID_W * CELL_SIZE;
+        let play_h = GRID_H * CELL_SIZE;
+
+        for gy in 0..GRID_H {
+            for gx in 0..GRID_W {
+                let px = self.offset_x + gx * CELL_SIZE;
+                let py = self.offset_y + gy * CELL_SIZE;
+                for i in 0..CELL_SIZE {
+                    self.set_pixel(px + i, py, COLOR_GRID);
+                    self.set_pixel(px, py + i, COLOR_GRID);
+                }
+            }
+        }
+
+        for x in 0..=play_w {
+            self.set_pixel(self.offset_x + x, self.offset_y - 1, COLOR_BORDER);
+            self.set_pixel(self.offset_x + x, self.offset_y + play_h, COLOR_BORDER);
+        }
+        for y in 0..=play_h {
+            self.set_pixel(self.offset_x - 1, self.offset_y + y, COLOR_BORDER);
+            self.set_pixel(self.offset_x + play_w, self.offset_y + y, COLOR_BORDER);
+        }
+    }
+
+    fn fill_rect(&self, x: usize, y: usize, w: usize, h: usize, color: (u8, u8, u8)) {
+        for dy in 0..h {
+            for dx in 0..w {
+                self.set_pixel(x + dx, y + dy, color);
+            }
+        }
+    }
+
+    fn draw_rect(&self, x: usize, y: usize, w: usize, h: usize, color: (u8, u8, u8)) {
+        let inset = 1;
+        for dy in inset..(h - inset) {
+            for dx in inset..(w - inset) {
+                self.set_pixel(x + dx, y + dy, color);
+            }
+        }
+    }
+
+    fn draw_number(&self, mut x: usize, y: usize, mut num: u32, color: (u8, u8, u8)) {
+        let mut digits = [0u8; 10];
+        let mut count = 0;
+        
+        if num == 0 {
+            digits[0] = 0;
+            count = 1;
+        } else {
+            while num > 0 {
+                digits[count] = (num % 10) as u8;
+                num /= 10;
+                count += 1;
+            }
+        }
+
+        let scale = 4;
+        for i in (0..count).rev() {
+            let d = digits[i] as usize;
+            let bitmap = &DIGITS[d];
+
+            for row in 0..5 {
+                for col in 0..3 {
+                    if bitmap[row * 3 + col] == 1 {
+                        for dy in 0..scale {
+                            for dx in 0..scale {
+                                self.set_pixel(x + col * scale + dx, y + row * scale + dy, color);
+                            }
+                        }
+                    }
+                }
+            }
+            x += 4 * scale;
+        }
+    }
+}
+
 const DIGITS: [[u8; 15]; 10] = [
     [1,1,1, 1,0,1, 1,0,1, 1,0,1, 1,1,1], // 0
     [0,1,0, 1,1,0, 0,1,0, 0,1,0, 1,1,1], // 1
@@ -80,9 +204,23 @@ fn main() -> i32 {
     let fb_fd = open("/dev/fb0\0", OpenFlags::RDWR);
     if fb_fd < 0 { return -1; }
 
-    let fb_base = mmap(0, SCREEN_W * SCREEN_H * 4, 0, 0, fb_fd as usize, 0);
+    // --- Dynamic Resolution Setup ---
+    let mut res: (u32, u32) = (0, 0);
+    ioctl(fb_fd as usize, FB_GET_RESOLUTION, &mut res as *mut _ as usize);
+    let screen_w = res.0 as usize;
+    let screen_h = res.1 as usize;
+
+    let fb_base = mmap(0, screen_w * screen_h * 4, 0, 0, fb_fd as usize, 0);
     if fb_base == 0 { return -1; }
-    let fb_ptr = fb_base as *mut u8;
+
+    // Dynamically calculate offsets to perfectly center the game board
+    let display = Display {
+        ptr: fb_base as *mut u8,
+        w: screen_w,
+        h: screen_h,
+        offset_x: (screen_w.saturating_sub(GRID_W * CELL_SIZE)) / 2,
+        offset_y: (screen_h.saturating_sub(GRID_H * CELL_SIZE)) / 2,
+    };
 
     let kb_fd = open("/dev/input0\0", OpenFlags::RDWR);
     if kb_fd < 0 { return -1; }
@@ -91,30 +229,32 @@ fn main() -> i32 {
     let mut snake = [(0i32, 0i32); MAX_SNAKE_LEN];
     let mut snake_len = 4;
     
-    // Initialize snake in the middle
     for i in 0..snake_len {
         snake[i] = ((GRID_W / 2) as i32 - i as i32, (GRID_H / 2) as i32);
     }
 
-    let mut dir = (1i32, 0i32); // Start moving right
+    let mut dir = (1i32, 0i32);
     let mut next_dir = dir;
     let mut prng = Prng { state: 1234567 };
-    let mut food = (prng.next_range(0, GRID_W as u32) as i32, prng.next_range(0, GRID_H as u32) as i32);
+    
+    // Use the safe spawn method
+    let mut food = spawn_food(&mut prng, &snake, snake_len);
     let mut score: u32 = 0;
 
     // --- INITIAL RENDER ---
-    fill_background(fb_ptr);
-    draw_play_area(fb_ptr);
+    display.fill_background();
+    display.draw_play_area();
     
     for i in 0..snake_len {
-        draw_rect(fb_ptr, OFFSET_X + snake[i].0 as usize * CELL_SIZE, OFFSET_Y + snake[i].1 as usize * CELL_SIZE, CELL_SIZE, CELL_SIZE, COLOR_SNAKE);
+        display.draw_rect(display.offset_x + snake[i].0 as usize * CELL_SIZE, display.offset_y + snake[i].1 as usize * CELL_SIZE, CELL_SIZE, CELL_SIZE, COLOR_SNAKE);
     }
-    draw_rect(fb_ptr, OFFSET_X + food.0 as usize * CELL_SIZE, OFFSET_Y + food.1 as usize * CELL_SIZE, CELL_SIZE, CELL_SIZE, COLOR_FOOD);
-    draw_number(fb_ptr, OFFSET_X, OFFSET_Y - 40, score, COLOR_BORDER);
+    display.draw_rect(display.offset_x + food.0 as usize * CELL_SIZE, display.offset_y + food.1 as usize * CELL_SIZE, CELL_SIZE, CELL_SIZE, COLOR_FOOD);
+    
+    let score_y = display.offset_y.saturating_sub(40);
+    display.draw_number(display.offset_x, score_y, score, COLOR_BORDER);
     
     ioctl(fb_fd as usize, FB_FLUSH, 0);
 
-    // Add an input buffer right before the main loop starts
     let mut input_buffer: [u16; 2] = [0, 0];
     let mut input_count = 0;
 
@@ -122,21 +262,18 @@ fn main() -> i32 {
         let frame_start_time = get_time();
 
         // --- 2. Process Buffered Input ---
-        // Only process ONE queued direction per grid movement
         if input_count > 0 {
             let code = input_buffer[0];
             
-            // Shift the queue down
             input_buffer[0] = input_buffer[1];
             input_count -= 1;
 
-            // Notice the condition change: dir.1 == 0 means "if we are moving horizontally, we can only turn vertically"
             match code {
                 KEY_UP | KEY_W    if dir.1 == 0 => dir = (0, -1),
                 KEY_DOWN | KEY_S  if dir.1 == 0 => dir = (0, 1),
                 KEY_LEFT | KEY_A  if dir.0 == 0 => dir = (-1, 0),
                 KEY_RIGHT | KEY_D if dir.0 == 0 => dir = (1, 0),
-                _ => {} // Invalid move (like trying to reverse), ignored
+                _ => {} 
             }
         }
 
@@ -144,12 +281,10 @@ fn main() -> i32 {
         let head = snake[0];
         let new_head = (head.0 + dir.0, head.1 + dir.1);
 
-        // Check Wall Collision
         if new_head.0 < 0 || new_head.0 >= GRID_W as i32 || new_head.1 < 0 || new_head.1 >= GRID_H as i32 {
             break; 
         }
 
-        // Check Self Collision
         let mut self_collision = false;
         for i in 0..snake_len {
             if new_head == snake[i] { self_collision = true; break; }
@@ -168,15 +303,15 @@ fn main() -> i32 {
             }
             score += 1;
             
-            food = (prng.next_range(0, GRID_W as u32) as i32, prng.next_range(0, GRID_H as u32) as i32);
+            // Generate food guaranteeing it avoids the snake body
+            food = spawn_food(&mut prng, &snake, snake_len);
             
-            draw_rect(fb_ptr, OFFSET_X + food.0 as usize * CELL_SIZE, OFFSET_Y + food.1 as usize * CELL_SIZE, CELL_SIZE, CELL_SIZE, COLOR_FOOD);
+            display.draw_rect(display.offset_x + food.0 as usize * CELL_SIZE, display.offset_y + food.1 as usize * CELL_SIZE, CELL_SIZE, CELL_SIZE, COLOR_FOOD);
             
-            fill_rect(fb_ptr, OFFSET_X, OFFSET_Y - 40, 120, 30, COLOR_BG);
-            draw_number(fb_ptr, OFFSET_X, OFFSET_Y - 40, score, COLOR_BORDER);
+            display.fill_rect(display.offset_x, score_y, 120, 30, COLOR_BG);
+            display.draw_number(display.offset_x, score_y, score, COLOR_BORDER);
         }
 
-        // Move body
         for i in (1..snake_len).rev() {
             snake[i] = snake[i - 1];
         }
@@ -184,10 +319,10 @@ fn main() -> i32 {
 
         // --- 4. Render Delta ---
         if !ate_food {
-            draw_rect(fb_ptr, OFFSET_X + old_tail.0 as usize * CELL_SIZE, OFFSET_Y + old_tail.1 as usize * CELL_SIZE, CELL_SIZE, CELL_SIZE, COLOR_BG);
+            display.draw_rect(display.offset_x + old_tail.0 as usize * CELL_SIZE, display.offset_y + old_tail.1 as usize * CELL_SIZE, CELL_SIZE, CELL_SIZE, COLOR_BG);
         }
 
-        draw_rect(fb_ptr, OFFSET_X + new_head.0 as usize * CELL_SIZE, OFFSET_Y + new_head.1 as usize * CELL_SIZE, CELL_SIZE, CELL_SIZE, COLOR_SNAKE);
+        display.draw_rect(display.offset_x + new_head.0 as usize * CELL_SIZE, display.offset_y + new_head.1 as usize * CELL_SIZE, CELL_SIZE, CELL_SIZE, COLOR_SNAKE);
 
         ioctl(fb_fd as usize, FB_FLUSH, 0);
 
@@ -196,7 +331,6 @@ fn main() -> i32 {
             let event_slice = core::ptr::slice_from_raw_parts_mut(&mut event as *mut InputEvent as *mut u8, core::mem::size_of::<InputEvent>());
             let ret = unsafe { read(kb_fd as usize, &mut *event_slice) };
             
-            // If we detect a keypress, add it to our queue (max 2)
             if ret > 0 && event.event_type == EV_KEY && event.value == 1 { 
                 if input_count < 2 {
                     input_buffer[input_count] = event.code;
@@ -207,102 +341,4 @@ fn main() -> i32 {
     }
 
     0
-}
-
-fn fill_background(fb: *mut u8) {
-    for y in 0..SCREEN_H {
-        for x in 0..SCREEN_W {
-            set_pixel(fb, x, y, COLOR_BG);
-        }
-    }
-}
-
-fn draw_play_area(fb: *mut u8) {
-    let play_w = GRID_W * CELL_SIZE;
-    let play_h = GRID_H * CELL_SIZE;
-
-    for gy in 0..GRID_H {
-        for gx in 0..GRID_W {
-            let px = OFFSET_X + gx * CELL_SIZE;
-            let py = OFFSET_Y + gy * CELL_SIZE;
-            for i in 0..CELL_SIZE {
-                set_pixel(fb, px + i, py, COLOR_GRID);
-                set_pixel(fb, px, py + i, COLOR_GRID);
-            }
-        }
-    }
-
-    for x in 0..=play_w {
-        set_pixel(fb, OFFSET_X + x, OFFSET_Y - 1, COLOR_BORDER);
-        set_pixel(fb, OFFSET_X + x, OFFSET_Y + play_h, COLOR_BORDER);
-    }
-    for y in 0..=play_h {
-        set_pixel(fb, OFFSET_X - 1, OFFSET_Y + y, COLOR_BORDER);
-        set_pixel(fb, OFFSET_X + play_w, OFFSET_Y + y, COLOR_BORDER);
-    }
-}
-
-// Fills a solid rectangle without an inset (used for clearing text)
-fn fill_rect(fb: *mut u8, x: usize, y: usize, w: usize, h: usize, color: (u8, u8, u8)) {
-    for dy in 0..h {
-        for dx in 0..w {
-            set_pixel(fb, x + dx, y + dy, color);
-        }
-    }
-}
-
-fn draw_rect(fb: *mut u8, x: usize, y: usize, w: usize, h: usize, color: (u8, u8, u8)) {
-    let inset = 1;
-    for dy in inset..(h - inset) {
-        for dx in inset..(w - inset) {
-            set_pixel(fb, x + dx, y + dy, color);
-        }
-    }
-}
-
-fn set_pixel(fb: *mut u8, x: usize, y: usize, color: (u8, u8, u8)) {
-    if x >= SCREEN_W || y >= SCREEN_H { return; }
-    let offset = (y * SCREEN_W + x) * 4;
-    unsafe {
-        fb.add(offset).write_volatile(color.2);     // B
-        fb.add(offset + 1).write_volatile(color.1); // G
-        fb.add(offset + 2).write_volatile(color.0); // R
-        fb.add(offset + 3).write_volatile(0xff);    // A
-    }
-}
-
-fn draw_number(fb: *mut u8, mut x: usize, y: usize, mut num: u32, color: (u8, u8, u8)) {
-    let mut digits = [0u8; 10];
-    let mut count = 0;
-    
-    if num == 0 {
-        digits[0] = 0;
-        count = 1;
-    } else {
-        while num > 0 {
-            digits[count] = (num % 10) as u8;
-            num /= 10;
-            count += 1;
-        }
-    }
-
-    let scale = 4;
-
-    for i in (0..count).rev() {
-        let d = digits[i] as usize;
-        let bitmap = &DIGITS[d];
-
-        for row in 0..5 {
-            for col in 0..3 {
-                if bitmap[row * 3 + col] == 1 {
-                    for dy in 0..scale {
-                        for dx in 0..scale {
-                            set_pixel(fb, x + col * scale + dx, y + row * scale + dy, color);
-                        }
-                    }
-                }
-            }
-        }
-        x += 4 * scale;
-    }
 }
