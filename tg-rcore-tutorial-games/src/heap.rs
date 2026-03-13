@@ -9,6 +9,7 @@ use customizable_buddy::{BuddyAllocator, LinkedListBuddy, UsizeBuddy};
 /// 初始化用户态全局分配器。
 ///
 /// 教学说明：用户程序同样需要 `alloc` 支持，因此也要在启动时初始化一个小堆。
+#[repr(C, align(16384))]
 struct StaticCell<T> {
     inner: UnsafeCell<T>,
 }
@@ -29,8 +30,7 @@ impl<T> StaticCell<T> {
 }
 
 pub fn init() {
-    // 托管空间 16 KiB
-    const MEMORY_SIZE: usize = 16 << 10;
+    const MEMORY_SIZE: usize = 1024 * 16;
     static MEMORY: StaticCell<[u8; MEMORY_SIZE]> = StaticCell::new([0u8; MEMORY_SIZE]);
     unsafe {
         heap_mut().init(
