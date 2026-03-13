@@ -29,6 +29,9 @@
 
 // 进程管理模块：定义 Process 结构体，包含地址空间和上下文
 mod process;
+mod device_manager;
+mod kernel_space;
+mod user_reader;
 
 // 引入控制台输出宏（print! / println!），由 tg_console 库提供
 #[macro_use]
@@ -40,10 +43,10 @@ extern crate alloc;
 // ========== 导入 ==========
 
 use crate::{
-    impls::{Sv39Manager, SyscallContext},
-    process::Process,
+    device_manager::{DEVICES, init_devices}, impls::SyscallContext, kernel_space::{KERNEL_SPACE, Sv39Manager}, process::Process
 };
 use alloc::{alloc::alloc, vec::Vec};
+use tg_driver::{visit_virtio_ranges};
 use core::{alloc::Layout, cell::UnsafeCell};
 use impls::Console;
 use riscv::register::*;
@@ -57,10 +60,9 @@ use tg_kernel_context::{foreign::MultislotPortal, LocalContext};
 #[cfg(target_arch = "riscv64")]
 use tg_kernel_vm::page_table::Sv39;
 use tg_kernel_vm::{
-    page_table::{MmuMeta, VAddr, VmFlags, VmMeta, PPN, VPN},
-    AddressSpace,
+    AddressSpace, page_table::{MmuMeta, PPN, VAddr, VPN, VmFlags, VmMeta}
 };
-use tg_sbi;
+use tg_sbi::{self, console_getchar};
 use tg_syscall::Caller;
 use xmas_elf::ElfFile;
 
@@ -99,7 +101,7 @@ core::arch::global_asm!(include_str!(env!("APP_ASM")));
 #[unsafe(no_mangle)]
 #[unsafe(link_section = ".text.entry")]
 unsafe extern "C" fn _start() -> ! {
-    const STACK_SIZE: usize = 6 * 4096;
+    const STACK_SIZE: usize = 16 * 4096;
     #[unsafe(link_section = ".boot.stack")]
     static mut STACK: [u8; STACK_SIZE] = [0u8; STACK_SIZE];
 
@@ -199,6 +201,20 @@ extern "C" fn rust_main() -> ! {
         PPN::new(stack as usize >> Sv39::PAGE_BITS),
         build_flags("_WRV"),
     );
+    // Remember to map VirtIO address!
+    visit_virtio_ranges(
+        |start, end| {
+            assert!(start.trailing_zeros() >= Sv39::PAGE_BITS as _);
+            assert!(end.trailing_zeros() >= Sv39::PAGE_BITS as _);
+            ks.map_extern(
+                VPN::new(start >> Sv39::PAGE_BITS)..VPN::new(end >> Sv39::PAGE_BITS),
+                PPN::new(start >> Sv39::PAGE_BITS),
+                build_flags("_WRV"),
+            );
+        }
+    );
+    KERNEL_SPACE.init(ks);
+    init_devices();
     // 第八步：建立调度线程
     // 调度线程在独立的异常域运行，内核异常不会导致整个系统崩溃
     let mut scheduling = LocalContext::thread(schedule as *const () as _, false);
@@ -275,6 +291,9 @@ extern "C" fn schedule() -> ! {
                     }
                 }
             }
+            scause::Trap::Interrupt(scause::Interrupt::SupervisorExternal) => {
+                DEVICES.get().unwrap().handle_external_interrupt();
+            }
             // ─── 其他异常/中断：杀死进程 ───
             e => {
                 log::error!(
@@ -287,6 +306,9 @@ extern "C" fn schedule() -> ! {
         }
     }
     // 所有进程执行完毕，关机
+    println!("Press any key to shutdown...");
+    console_getchar();
+    println!("");
     tg_sbi::shutdown(false)
 }
 
@@ -363,90 +385,13 @@ fn kernel_space(
 /// 与前几章不同，本章的系统调用实现需要进行**地址翻译**：
 /// 用户传入的指针是虚拟地址，内核需要通过页表将其翻译为物理地址才能访问。
 mod impls {
-    use crate::{build_flags, Sv39, PROCESSES};
-    use alloc::alloc::alloc_zeroed;
-    use core::{alloc::Layout, ptr::NonNull};
+    use crate::{PROCESSES, Sv39, build_flags, device_manager::DEVICES, kernel_space::Sv39Manager, user_reader::read_zero_ended_list};
     use tg_console::log;
+    use tg_driver::InputEvent;
     use tg_kernel_vm::{
-        page_table::{MmuMeta, Pte, VAddr, VmFlags, PPN, VPN},
-        PageManager,
+        AddressSpace, page_table::{MmuMeta, PPN, VAddr, VmFlags}
     };
     use tg_syscall::*;
-
-    /// Sv39 页表管理器：负责物理页的分配和映射。
-    #[repr(transparent)]
-    pub struct Sv39Manager(NonNull<Pte<Sv39>>);
-
-    impl Sv39Manager {
-        /// 自定义标志位：标记该页面由内核分配（用于 deallocate 时判断）
-        const OWNED: VmFlags<Sv39> = unsafe { VmFlags::from_raw(1 << 8) };
-
-        /// 分配物理页面并清零
-        #[inline]
-        fn page_alloc<T>(count: usize) -> *mut T {
-            unsafe {
-                alloc_zeroed(Layout::from_size_align_unchecked(
-                    count << Sv39::PAGE_BITS,
-                    1 << Sv39::PAGE_BITS,
-                ))
-            }
-            .cast()
-        }
-    }
-
-    /// 实现 PageManager trait：为地址空间提供页表操作能力
-    impl PageManager<Sv39> for Sv39Manager {
-        /// 创建新的根页表（分配一个物理页）
-        #[inline]
-        fn new_root() -> Self {
-            Self(NonNull::new(Self::page_alloc(1)).unwrap())
-        }
-
-        /// 获取根页表的物理页号
-        #[inline]
-        fn root_ppn(&self) -> PPN<Sv39> {
-            PPN::new(self.0.as_ptr() as usize >> Sv39::PAGE_BITS)
-        }
-
-        /// 获取根页表的指针
-        #[inline]
-        fn root_ptr(&self) -> NonNull<Pte<Sv39>> {
-            self.0
-        }
-
-        /// 物理页号 → 虚拟地址指针（恒等映射下 PPN == VPN）
-        #[inline]
-        fn p_to_v<T>(&self, ppn: PPN<Sv39>) -> NonNull<T> {
-            unsafe { NonNull::new_unchecked(VPN::<Sv39>::new(ppn.val()).base().as_mut_ptr()) }
-        }
-
-        /// 虚拟地址指针 → 物理页号
-        #[inline]
-        fn v_to_p<T>(&self, ptr: NonNull<T>) -> PPN<Sv39> {
-            PPN::new(VAddr::<Sv39>::new(ptr.as_ptr() as _).floor().val())
-        }
-
-        /// 检查页表项是否由内核分配
-        #[inline]
-        fn check_owned(&self, pte: Pte<Sv39>) -> bool {
-            pte.flags().contains(Self::OWNED)
-        }
-
-        /// 分配物理页面：清零并标记为内核拥有
-        #[inline]
-        fn allocate(&mut self, len: usize, flags: &mut VmFlags<Sv39>) -> NonNull<u8> {
-            *flags |= Self::OWNED;
-            NonNull::new(Self::page_alloc(len)).unwrap()
-        }
-
-        fn deallocate(&mut self, _pte: Pte<Sv39>, _len: usize) -> usize {
-            todo!()
-        }
-
-        fn drop_root(&mut self) {
-            todo!()
-        }
-    }
 
     /// 控制台实现：通过 SBI 逐字符输出
     pub struct Console;
@@ -460,6 +405,18 @@ mod impls {
 
     /// 系统调用上下文实现
     pub struct SyscallContext;
+    
+    const GPU_FD: usize = 3;
+    const KEYBOARD_FD: usize = 4;
+    const FB_FLUSH: usize = 1;
+    const FB_GET_RESOLUTION: usize = 2;
+
+    const READABLE: VmFlags<Sv39> = build_flags("URV");
+    const WRITABLE: VmFlags<Sv39> = build_flags("UWRV");
+
+    fn addr_space_of(caller: Caller) -> &'static mut AddressSpace<Sv39, Sv39Manager> {
+        unsafe { &mut PROCESSES.get_mut().get_mut(caller.entity).unwrap().address_space }
+    }
 
     /// IO 系统调用实现
     ///
@@ -469,13 +426,7 @@ mod impls {
         fn write(&self, caller: Caller, fd: usize, buf: usize, count: usize) -> isize {
             match fd {
                 STDOUT | STDDEBUG => {
-                    // 检查用户地址是否可读
-                    const READABLE: VmFlags<Sv39> = build_flags("RV");
-                    if let Some(ptr) = unsafe { PROCESSES.get_mut() }
-                        .get_mut(caller.entity)
-                        .unwrap()
-                        .address_space
-                        .translate::<u8>(VAddr::new(buf), READABLE)
+                    if let Some(ptr) = addr_space_of(caller).translate::<u8>(VAddr::new(buf), READABLE)
                     {
                         print!("{}", unsafe {
                             core::str::from_utf8_unchecked(core::slice::from_raw_parts(
@@ -491,6 +442,91 @@ mod impls {
                 }
                 _ => {
                     log::error!("unsupported fd: {fd}");
+                    -1
+                }
+            }
+        }
+
+        fn read(&self, caller: Caller, fd: usize, buf: usize, count: usize) -> isize {
+            match fd {
+                KEYBOARD_FD => {
+                    let Some(mut ptr) = addr_space_of(caller).translate::<InputEvent>(VAddr::new(buf), WRITABLE)
+                    else {
+                        log::error!("ptr not writable");
+                        return -1;
+                    };
+                    let Some(keyboard) = DEVICES.get().unwrap().get_keyboard()
+                    else {
+                        tg_console::log::error!("Keyboard not initialized");
+                        return -1;
+                    };
+                    let mut read_count = 0;
+                    while read_count + core::mem::size_of::<InputEvent>() <= count {
+                        let Some(event) = keyboard.read_event() else { break; };
+                        let event_ptr = ptr.as_ptr();
+                        unsafe { event_ptr.write_volatile(event); }
+                        ptr = unsafe { ptr.add(core::mem::size_of::<InputEvent>()) };
+                        read_count += core::mem::size_of::<InputEvent>();
+                    }
+                    read_count as isize
+                }
+                _ => {
+                    tg_console::log::error!("unsupported fd: {fd}");
+                    -1
+                }
+            }
+        }
+
+        fn open(&self, caller: tg_syscall::Caller, path: usize, _flags: usize) -> isize {
+            let Ok(path_slice) = read_zero_ended_list(addr_space_of(caller), path)
+            else {
+                log::error!("path not readable");
+                return -1;
+            };
+            let path_str = unsafe { core::str::from_utf8_unchecked(path_slice) };
+            // hardcoded paths
+            if path_str == "/dev/fb0" {
+                GPU_FD as isize
+            } else if path_str == "/dev/input0" {
+                KEYBOARD_FD as isize
+            } else {
+                -1
+            }
+        }
+
+        fn ioctl(&self, caller: tg_syscall::Caller, fd: usize, request: usize, argp: usize) -> isize {
+            match fd {
+                GPU_FD => {
+                    let Some(gpu) = DEVICES.get().unwrap().get_gpu() else {
+                        tg_console::log::error!("GPU not initialized");
+                        return -1;
+                    };
+                    match request {
+                        FB_FLUSH => {
+                            gpu.flush().unwrap();
+                            0
+                        }
+                        FB_GET_RESOLUTION => {
+                            let (w, h) = gpu.resolution().unwrap();
+                            let Some(res_ptr) = addr_space_of(caller).translate::<u32>(VAddr::new(argp), WRITABLE)
+                            else {
+                                tg_console::log::error!("argp not writable");
+                                return -1;
+                            };
+                            unsafe {
+                                res_ptr.write_volatile(w as u32);
+                                res_ptr.add(1).write_volatile(h as u32);
+                            }
+                            0
+                        }
+                        _ => {
+                            tg_console::log::error!("unsupported request: {request}");
+                            -1
+                        }
+                    }
+                }
+                _ => {
+                    tg_console::log::error!("unsupported fd: {fd}");
                     -1
                 }
             }
@@ -536,8 +572,6 @@ mod impls {
     impl Clock for SyscallContext {
         #[inline]
         fn clock_gettime(&self, caller: Caller, clock_id: ClockId, tp: usize) -> isize {
-            // 检查用户地址是否可写
-            const WRITABLE: VmFlags<Sv39> = build_flags("W_V");
             match clock_id {
                 ClockId::CLOCK_MONOTONIC => {
                     if let Some(mut ptr) = unsafe { PROCESSES.get_mut() }
@@ -627,7 +661,7 @@ mod impls {
             len: usize,
             prot: i32,
             _flags: i32,
-            _fd: i32,
+            fd: i32,
             _offset: usize,
         ) -> isize {
             if addr % 4096 != 0 {
@@ -637,9 +671,7 @@ mod impls {
                 return -1;
             }
             if len == 0 {
-                // Return immediately if len = 0 according to typical mappings, but let's align up if needed.
-                return 0; // The tests might expect 0 or -1, wait len==0 => success normally, let's say 0. But wait! Actually length is requested to be mapped. Just return -1? No, Linux says mmap 0 size fails. Let's just process normally maybe size is rounded up? Actually len=0 map shouldn't really map anything. Let's just continue, VAddr range start..start mapping nothing.
-                // Wait, the readme says "len 字节长度（可为 0，按页向上取整）". So if len is 0, it means 0 pages? No, if len is 0, ceiling it gives 0 pages? Linux returns EINVAL if len is 0. If it's an edge case, let's just proceed to get size rounded up to next page aligned. But if len=0, wait, `count = ceil - floor`. `VAddr::new(addr + 0).ceil() - VAddr::new(addr).floor() == 0`.
+                return -1;
             }
             
             let mut flags_bytes = [b'U', b'_', b'_', b'_', b'V'];
@@ -655,10 +687,20 @@ mod impls {
             let flags_str = unsafe { core::str::from_utf8_unchecked(&flags_bytes) };
             let flags = build_flags(flags_str);
             
-            let start = VAddr::<Sv39>::new(addr).floor();
-            let end = VAddr::<Sv39>::new(addr + len).ceil();
-            
             let process = unsafe { PROCESSES.get_mut() }.get_mut(caller.entity).unwrap();
+
+            let start;
+            let end;
+
+            if addr != 0 {
+                start = VAddr::<Sv39>::new(addr).floor();
+                end = VAddr::<Sv39>::new(addr + len).ceil();
+            } else {
+                let brk = process.program_brk;
+                start = VAddr::<Sv39>::new(brk).floor();
+                end = VAddr::<Sv39>::new(brk + len).ceil();
+                process.program_brk = end.base().val();
+            }
             
             // 检查冲突
             let mut conflict = false;
@@ -672,8 +714,26 @@ mod impls {
                 return -1;
             }
 
-            process.address_space.map(start..end, &[], 0, flags);
-            0
+            if fd == GPU_FD as _ {
+                let gpu = DEVICES.get().unwrap().get_gpu().unwrap();
+                // Check that len completely covers gpu framebuffer
+                if len != gpu.resolution().map(|res| res.0 * res.1 * 4).unwrap() as _ {
+                    log::error!("len does not completely cover gpu framebuffer");
+                    return -1;
+                }
+
+                let fb = gpu.get_framebuffer().unwrap();
+                let fb_ptr = fb.as_ptr() as usize;
+                // check that physical framebuffer is page aligned
+                assert!((fb_ptr & ((1 << Sv39::PAGE_BITS) - 1)) == 0);
+                let fb_ppn = PPN::new(fb_ptr >> Sv39::PAGE_BITS);
+                
+                process.address_space.map_extern(start..end, fb_ppn, flags);
+                start.base().val() as _
+            } else {
+                process.address_space.map(start..end, &[], 0, flags);
+                start.base().val() as _
+            }
         }
 
         fn munmap(&self, caller: Caller, addr: usize, len: usize) -> isize {

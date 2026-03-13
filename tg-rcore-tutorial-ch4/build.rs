@@ -13,22 +13,19 @@ struct Cases {
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-env-changed=LOG");
-    println!("cargo:rerun-if-env-changed=TG_USER_DIR");
-    println!("cargo:rerun-if-env-changed=TG_USER_VERSION");
-    println!("cargo:rerun-if-env-changed=TG_USER_CRATE");
-    println!("cargo:rerun-if-env-changed=TG_USER_LOCAL_DIR");
-    println!("cargo:rerun-if-env-changed=TG_SKIP_USER_APPS");
-    println!("cargo:rerun-if-env-changed=CARGO_FEATURE_EXERCISE");
+    println!("cargo:rerun-if-env-changed=TG_GAMES_DIR");
+    println!("cargo:rerun-if-env-changed=TG_GAMES_CRATE");
+    println!("cargo:rerun-if-env-changed=TG_GAMES_LOCAL_DIR");
+    println!("cargo:rerun-if-env-changed=TG_GAMES_VERSION");
 
     let target_arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
 
-    // 只在 RISC-V64 架构上使用链接脚本
     if target_arch == "riscv64" {
         write_linker();
         if should_skip_build_apps() {
             write_dummy_app_asm();
         } else {
-            build_apps();
+            build_game_apps();
         }
     }
 }
@@ -38,7 +35,9 @@ fn should_skip_build_apps() -> bool {
         return true;
     }
 
-    is_packaged_build()
+    let manifest_dir = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
+    let manifest_dir = manifest_dir.to_string_lossy();
+    manifest_dir.contains("/target/package/") || manifest_dir.contains("\\target\\package\\")
 }
 
 fn write_linker() {
@@ -49,56 +48,64 @@ fn write_linker() {
     println!("cargo:rustc-link-arg=-T{}", ld.display());
 }
 
-fn is_packaged_build() -> bool {
-    let out_dir = PathBuf::from(env::var_os("OUT_DIR").unwrap());
-    let out_dir = out_dir.to_string_lossy();
-
-    let manifest_dir = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
-    let manifest_dir = manifest_dir.to_string_lossy();
-
-    out_dir.contains("/target/package/")
-        || out_dir.contains("\\target\\package\\")
-        || manifest_dir.contains("/target/package/")
-        || manifest_dir.contains("\\target\\package\\")
-}
-
-fn build_apps() {
-    let tg_user_root = ensure_tg_user();
-    let cases_path = tg_user_root.join("cases.toml");
+fn build_game_apps() {
+    let games_dir = ensure_tg_games();
+    let cases_path = games_dir.join("cases.toml");
     println!("cargo:rerun-if-changed={}", cases_path.display());
-    println!(
-        "cargo:rerun-if-changed={}",
-        tg_user_root.join("Cargo.toml").display()
-    );
-    println!("cargo:rerun-if-changed={}", tg_user_root.join("src").display());
+    println!("cargo:rerun-if-changed={}", games_dir.join("Cargo.toml").display());
+    println!("cargo:rerun-if-changed={}", games_dir.join("src").display());
 
     let cfg = fs::read_to_string(&cases_path).unwrap_or_else(|err| {
-        panic!("failed to read cases.toml from {}: {}", cases_path.display(), err)
+        panic!(
+            "failed to read games cases.toml from {}: {}",
+            cases_path.display(),
+            err
+        )
     });
     let mut cases_map: HashMap<String, Cases> = toml::from_str(&cfg).unwrap_or_else(|err| {
-        panic!("failed to parse cases.toml: {err}")
+        panic!("failed to parse games cases.toml: {err}")
     });
 
-    let case_key = if env::var("CARGO_FEATURE_EXERCISE").is_ok() {
-        "ch4_exercise"
-    } else {
-        "ch4"
-    };
-    let cases = cases_map.remove(case_key).unwrap_or_default();
+    let cases = cases_map.remove("ch4").unwrap_or_default();
     let base = cases.base.unwrap_or(0);
     let step = cases.step.unwrap_or(0);
     let names = cases.cases.unwrap_or_default();
 
     if names.is_empty() {
-        panic!("no user cases found for {case_key} in {}", cases_path.display());
+        panic!("no game cases found for ch4 in {}", cases_path.display());
     }
 
-    let target_dir = tg_user_root.join("target").join(TARGET_ARCH).join("debug");
+    let target_dir = games_dir
+        .join("target")
+        .join(TARGET_ARCH)
+        .join("debug");
+
     let mut bins: Vec<PathBuf> = Vec::with_capacity(names.len());
 
     for (i, name) in names.iter().enumerate() {
         let base_address = base + i as u64 * step;
-        build_user_app(&tg_user_root, name, base_address);
+
+        // Build the game binary
+        let mut cmd = Command::new("cargo");
+        cmd.args([
+            "build",
+            "--manifest-path",
+            games_dir.join("Cargo.toml").to_string_lossy().as_ref(),
+            "--bin",
+            name,
+            "--target",
+            TARGET_ARCH,
+        ]);
+        if base_address != 0 {
+            cmd.env("BASE_ADDRESS", base_address.to_string());
+        }
+        let status = cmd
+            .status()
+            .expect("failed to execute cargo build for game app");
+        if !status.success() {
+            panic!("failed to build game app {name}");
+        }
+
         let elf = target_dir.join(name);
         let app_path = if base_address != 0 {
             objcopy_to_bin(&elf)
@@ -112,28 +119,6 @@ fn build_apps() {
     let app_asm = out_dir.join("app.asm");
     write_app_asm(&app_asm, base, step, &bins);
     println!("cargo:rustc-env=APP_ASM={}", app_asm.display());
-}
-
-fn build_user_app(tg_user_root: &PathBuf, name: &str, base_address: u64) {
-    let mut cmd = Command::new("cargo");
-    cmd.args([
-        "build",
-        "--manifest-path",
-        tg_user_root.join("Cargo.toml").to_string_lossy().as_ref(),
-        "--bin",
-        name,
-        "--target",
-        TARGET_ARCH,
-    ]);
-
-    if base_address != 0 {
-        cmd.env("BASE_ADDRESS", base_address.to_string());
-    }
-
-    let status = cmd.status().expect("failed to execute cargo build for user app");
-    if !status.success() {
-        panic!("failed to build user app {name}");
-    }
 }
 
 fn objcopy_to_bin(elf: &PathBuf) -> PathBuf {
@@ -159,9 +144,15 @@ fn write_app_asm(path: &PathBuf, base: u64, step: u64, bins: &[PathBuf]) {
     let mut asm = fs::File::create(path)
         .unwrap_or_else(|err| panic!("failed to create {}: {}", path.display(), err));
 
+    let version_id = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+
     writeln!(
         asm,
         "\
+# Version Id: {version_id}
 .global apps
 .section .data
 .align 3
@@ -216,73 +207,111 @@ apps:
     println!("cargo:rustc-env=APP_ASM={}", app_asm.display());
 }
 
-fn ensure_tg_user() -> PathBuf {
-    // 优先使用 TG_USER_DIR 显式指定的目录
-    if let Ok(dir) = env::var("TG_USER_DIR") {
+fn ensure_tg_games() -> PathBuf {
+    if let Ok(dir) = env::var("TG_GAMES_DIR") {
         let path = PathBuf::from(dir);
         if path.join("Cargo.toml").exists() {
             return path;
         }
     }
 
-    // 从 .cargo/config.toml [env] 读取三个配置项
-    let crate_name = env::var("TG_USER_CRATE")
-        .expect("TG_USER_CRATE not set; add it to .cargo/config.toml [env]");
-    let local_dir_name = env::var("TG_USER_LOCAL_DIR")
-        .expect("TG_USER_LOCAL_DIR not set; add it to .cargo/config.toml [env]");
-    let version = env::var("TG_USER_VERSION")
-        .expect("TG_USER_VERSION not set; add it to .cargo/config.toml [env]");
+    let crate_name = env::var("TG_GAMES_CRATE")
+        .expect("TG_GAMES_CRATE not set; add it to .cargo/config.toml [env]");
+    let local_dir_name = env::var("TG_GAMES_LOCAL_DIR")
+        .expect("TG_GAMES_LOCAL_DIR not set; add it to .cargo/config.toml [env]");
+    let version = env::var("TG_GAMES_VERSION")
+        .expect("TG_GAMES_VERSION not set; add it to .cargo/config.toml [env]");
 
     let manifest_dir = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
-    let tg_user_dir = manifest_dir.join(&local_dir_name);
+    let target_dir = manifest_dir.join(&local_dir_name);
 
-    // 本地缓存目录已存在则直接使用
-    if tg_user_dir.join("Cargo.toml").exists() {
-        ensure_workspace_table(&tg_user_dir);
-        return tg_user_dir;
+    if target_dir.join("Cargo.toml").exists() {
+        // ensure_workspace_table(&target_dir);
+        // return target_dir;
+        Command::new("rm").args(["-rf", target_dir.to_string_lossy().as_ref()]).status().unwrap();
     }
 
-    // 从 crates.io 克隆指定包
-    let crate_spec = format!("{crate_name}@{version}");
-    let status = Command::new("cargo")
-        .args([
-            "clone",
-            crate_spec.as_str(),
-            "--",
-            tg_user_dir.to_string_lossy().as_ref(),
-        ])
-        .status()
-        .unwrap_or_else(|e| panic!("failed to execute cargo clone {crate_spec}: {e}"));
+    let sibling_games_dir = manifest_dir.parent().unwrap().join(&crate_name);
 
-    if !status.success() {
+    if sibling_games_dir.join("Cargo.toml").exists() {
+        println!(
+            "cargo:warning=Using local copy of crate {} in path {}",
+            crate_name, local_dir_name
+        );
+        let status = Command::new("cp")
+            .args([
+                "-r",
+                sibling_games_dir.to_string_lossy().as_ref(),
+                target_dir.to_string_lossy().as_ref(),
+            ])
+            .status()
+            .unwrap_or_else(|e| panic!("failed to execute cp: {e}"));
+
+        if !status.success() {
+            panic!(
+                "failed to copy {} to {}",
+                sibling_games_dir.display(),
+                target_dir.display()
+            );
+        }
+
+        let copied_target = target_dir.join("target");
+        if copied_target.exists() {
+            let _ = fs::remove_dir_all(&copied_target);
+        }
+
+        // Patch the generic framework dependencies path in the copied Cargo.toml
+        let cargo_toml = target_dir.join("Cargo.toml");
+        if cargo_toml.exists() {
+            let content = fs::read_to_string(&cargo_toml).unwrap();
+            let patched = content.replace("path = \"../tg-", "path = \"../../tg-");
+            fs::write(&cargo_toml, patched).unwrap();
+        }
+    } else {
+        println!(
+            "cargo:warning=Pulling crate {} with cargo clone",
+            crate_name
+        );
+        let crate_spec = format!("{crate_name}@{version}");
+        let status = Command::new("cargo")
+            .args([
+                "clone",
+                crate_spec.as_str(),
+                "--",
+                target_dir.to_string_lossy().as_ref(),
+            ])
+            .status()
+            .unwrap_or_else(|e| panic!("failed to execute cargo clone {crate_spec}: {e}"));
+
+        if !status.success() {
+            panic!(
+                "failed to clone {crate_spec} into {}; ensure cargo-clone is installed",
+                target_dir.display()
+            );
+        }
+    }
+
+    if !target_dir.join("Cargo.toml").exists() {
         panic!(
-            "failed to clone {crate_spec} into {}; ensure cargo-clone is installed or set TG_USER_DIR",
-            tg_user_dir.display()
+            "failed to populate valid crate at {}",
+            target_dir.display()
         );
     }
 
-    if !tg_user_dir.join("Cargo.toml").exists() {
-        panic!(
-            "{crate_spec} clone did not produce a valid crate at {}",
-            tg_user_dir.display()
-        );
-    }
-
-    // 克隆后补加 [workspace]，防止父 workspace 将其识别为非成员而报错
-    ensure_workspace_table(&tg_user_dir);
-
-    tg_user_dir
+    ensure_workspace_table(&target_dir);
+    target_dir
 }
 
-/// 若 Cargo.toml 末尾尚无 [workspace] 表，则追加一个空的，
-/// 使该 crate 成为独立 workspace 根，避免父 workspace 冲突。
 fn ensure_workspace_table(dir: &PathBuf) {
     let cargo_toml = dir.join("Cargo.toml");
     let content = fs::read_to_string(&cargo_toml).unwrap_or_default();
     if !content.contains("[workspace]") {
-        fs::write(&cargo_toml, format!("{}
-[workspace]
-", content))
-            .unwrap_or_else(|err| panic!("failed to patch Cargo.toml in {}: {}", dir.display(), err));
+        fs::write(&cargo_toml, format!("{}\n[workspace]\n", content)).unwrap_or_else(|err| {
+            panic!(
+                "failed to patch Cargo.toml in {}: {}",
+                dir.display(),
+                err
+            )
+        });
     }
 }
