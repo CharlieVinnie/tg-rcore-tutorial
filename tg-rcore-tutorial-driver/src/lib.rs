@@ -9,8 +9,11 @@ mod plic;
 mod buffer;
 mod qemu;
 mod clock;
+mod address;
 
-pub use devices::DeviceManager;
+pub use devices::{DeviceManager};
+
+pub use address::*;
 
 pub use gpu::{GpuDevice, VirtIOGpuWrapper};
 

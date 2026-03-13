@@ -1,6 +1,4 @@
-use crate::{plic::{IntrTargetPriority, PLIC}};
-
-pub const VIRT_PLIC: usize = 0xC00_0000;
+use crate::{plic::{IntrTargetPriority, PLIC}, address::VIRT_PLIC};
 
 pub const HART_ID: usize = 0;
 

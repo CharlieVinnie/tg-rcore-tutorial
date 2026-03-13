@@ -2,11 +2,7 @@ use alloc::{collections::btree_map::BTreeMap, sync::Arc};
 use tg_console::println;
 use virtio_drivers::{DeviceType, Hal, MmioTransport, Transport, VirtIOHeader};
 
-use crate::{GpuDevice, VirtIOGpuWrapper, buffer::OverflowStrategy, input::{InputDevice, VirtIOInputWrapper}, qemu::{claim_irq, complete_irq, setup_interrupt_for, enable_external_interrupts}};
-
-pub const VIRTIO_START: usize = 0x1000_1000;
-pub const VIRTIO_END: usize = 0x1000_9000;
-pub const VIRTIO_STEP: usize = 0x1000;
+use crate::{GpuDevice, VirtIOGpuWrapper, buffer::OverflowStrategy, input::{InputDevice, VirtIOInputWrapper}, qemu::{claim_irq, complete_irq, setup_interrupt_for, enable_external_interrupts}, address::*};
 
 pub trait Device : Send + Sync {
     fn handle_irq(&self);
