@@ -1,0 +1,17 @@
+[package]
+name = "tg-rcore-tutorial-ch1-virtioblk"
+edition = "2024"
+version = "0.1.0"
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
+
+[dependencies]
+spin = "0.9"
+tg-sbi = { package = "tg-rcore-tutorial-sbi", version = "0.4.5", features = ["nobios"] }
+riscv = "0.11"
+fdt = "0.1.5"
+buddy_system_allocator = "0.9"
