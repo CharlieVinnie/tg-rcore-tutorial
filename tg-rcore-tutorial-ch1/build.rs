@@ -3,15 +3,18 @@
 //! 链接脚本控制程序各段在内存中的布局，确保：
 //! - M-mode 代码（tg-sbi）从 0x80000000 开始
 //! - S-mode 代码（_start 入口）从 0x80200000 开始
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::{env, fs, path::PathBuf};
 
 fn main() {
     use std::{env, fs, path::PathBuf, process::Command};
 
-    let games_dir = ensure_tg_games();
+    let game_dir = ensure_tg_game();
+    let game_bin = env::var("TG_GAME_BIN").expect("TG_GAME_BIN not set; add it to .cargo/config.toml [env]");
 
     println!("cargo:rerun-if-changed=build.rs");
-    println!("cargo:rerun-if-changed={}", games_dir.display());
+    println!("cargo:rerun-if-changed={}", game_dir.display());
     
     // 仅在交叉编译到 RISC-V64 时生成链接脚本
     if env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default() == "riscv64" {
@@ -31,9 +34,9 @@ fn main() {
             .args([
                 "build",
                 "--manifest-path",
-                games_dir.join("Cargo.toml").to_str().unwrap(),
+                game_dir.join("Cargo.toml").to_str().unwrap(),
                 "--bin",
-                "ch1b_os",
+                game_bin.as_str(),
                 "--target",
                 "riscv64gc-unknown-none-elf"
             ])
@@ -45,7 +48,7 @@ fn main() {
         }
 
         // Objcopy to raw binary
-        let games_elf = games_dir.join("target").join("riscv64gc-unknown-none-elf").join("debug").join("ch1b_os");
+        let games_elf = game_dir.join("target").join("riscv64gc-unknown-none-elf").join("debug").join(game_bin);
         let user_bin = out_dir.join("user.bin");
 
         let objcopy_status = Command::new("rust-objcopy")
@@ -63,17 +66,30 @@ fn main() {
             panic!("Failed to objcopy user application");
         }
 
-        // Generate a unique ID (timestamp) to break the rustc cache of APP_ASM
-        let version_id = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
+        let bins = vec![user_bin.clone()];
+        let mut hasher = DefaultHasher::new();
+
+        for path in &bins {
+            // 1. Tell Cargo to wake up and run build.rs if the file metadata changes
+            println!("cargo:rerun-if-changed={}", path.display());
+
+            // 2. Read the actual bytes of the binary and feed them into the hasher
+            if let Ok(bytes) = fs::read(path) {
+                bytes.hash(&mut hasher);
+            } else {
+                // Optional: Handle the error if the file is missing during the build script phase
+                println!("cargo:warning=Could not read file for hashing: {}", path.display());
+            }
+        }
+
+        // 3. Emit the final hash as a rustc environment variable.
+        // This breaks the rustc cache ONLY when the contents of the binaries change.
+        println!("cargo:rustc-env=BINS_CONTENT_HASH={}", hasher.finish());
 
         // Generate app.asm
         let app_asm = out_dir.join("app.asm");
         let asm_content = format!(
             r#"
-    # Version: {version_id}
     .global user_app
     .section .data
     .align 3
@@ -155,55 +171,49 @@ SECTIONS {
     __kernel_end = .;
 }";
 
-fn ensure_tg_games() -> PathBuf {
-    if let Ok(dir) = env::var("TG_GAMES_DIR") {
+fn ensure_tg_game() -> PathBuf {
+    if let Ok(dir) = env::var("TG_GAME_DIR") {
         let path = PathBuf::from(dir);
         if path.join("Cargo.toml").exists() {
             return path;
         }
     }
 
-    let crate_name = env::var("TG_GAMES_CRATE")
-        .expect("TG_GAMES_CRATE not set; add it to .cargo/config.toml [env]");
-    let local_dir_name = env::var("TG_GAMES_LOCAL_DIR")
-        .expect("TG_GAMES_LOCAL_DIR not set; add it to .cargo/config.toml [env]");
-    let version = env::var("TG_GAMES_VERSION")
-        .expect("TG_GAMES_VERSION not set; add it to .cargo/config.toml [env]");
+    let crate_name = env::var("TG_GAME_CRATE")
+        .expect("TG_GAME_CRATE not set; add it to .cargo/config.toml [env]");
+    let local_dir_name = env::var("TG_GAME_LOCAL_DIR")
+        .expect("TG_GAME_LOCAL_DIR not set; add it to .cargo/config.toml [env]");
+    let cache_dir_name = env::var("TG_GAME_CACHE")
+        .expect("TG_GAME_CACHE not set; add it to .cargo/config.toml [env]");
+    let version = env::var("TG_GAME_VERSION")
+        .expect("TG_GAME_VERSION not set; add it to .cargo/config.toml [env]");
 
-    let manifest_dir = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
-    let target_dir = manifest_dir.join(&local_dir_name);
+    let out_dir = PathBuf::from(env::var_os("OUT_DIR").unwrap());
+    let target_dir = out_dir.join(&cache_dir_name);
 
-    if target_dir.join("Cargo.toml").exists() {
-        ensure_workspace_table(&target_dir);
-        return target_dir;
-    }
-
-    let sibling_games_dir = manifest_dir.parent().unwrap().join(&crate_name);
+    let manifest_path = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
+    let parent_dir = manifest_path.parent().unwrap();
+    let local_dir = parent_dir.join(&local_dir_name);
     
-    if sibling_games_dir.join("Cargo.toml").exists() {
+    if local_dir.join("Cargo.toml").exists() {
         println!("cargo:warning=Using local copy of crate {} in path {}", crate_name, local_dir_name);
+        if target_dir.exists() {
+            let _ = fs::remove_dir_all(&target_dir);
+        }
         let status = std::process::Command::new("cp")
-            .args(["-r", sibling_games_dir.to_string_lossy().as_ref(), target_dir.to_string_lossy().as_ref()])
+            .args(["-r", local_dir.to_string_lossy().as_ref(), target_dir.to_string_lossy().as_ref()])
             .status()
             .unwrap_or_else(|e| panic!("failed to execute cp: {e}"));
             
         if !status.success() {
-            panic!("failed to copy {} to {}", sibling_games_dir.display(), target_dir.display());
+            panic!("failed to copy {} to {}", local_dir.display(), target_dir.display());
         }
 
         let copied_target = target_dir.join("target");
         if copied_target.exists() {
             let _ = fs::remove_dir_all(&copied_target);
         }
-
-        // Patch the generic framework dependencies path in the copied Cargo.toml to point out of the ch1 nested root
-        let cargo_toml = target_dir.join("Cargo.toml");
-        if cargo_toml.exists() {
-            let content = std::fs::read_to_string(&cargo_toml).unwrap();
-            let patched = content.replace("path = \"../tg-", "path = \"../../tg-");
-            std::fs::write(&cargo_toml, patched).unwrap();
-        }
-    } else {
+    } else if !target_dir.join("Cargo.toml").exists() {
         println!("cargo:warning=Pulling crate {} with cargo clone", crate_name);
         let crate_spec = format!("{crate_name}@{version}");
         let status = std::process::Command::new("cargo")
@@ -214,6 +224,8 @@ fn ensure_tg_games() -> PathBuf {
         if !status.success() {
             panic!("failed to clone {crate_spec} into {}; ensure cargo-clone is installed", target_dir.display());
         }
+    } else {
+        println!("cargo:warning=Using cached crate {}", crate_name);
     }
 
     if !target_dir.join("Cargo.toml").exists() {

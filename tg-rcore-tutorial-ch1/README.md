@@ -1,3 +1,5 @@
+### This repo is based on https://github.com/rcore-os/tg-rcore-tutorial.
+
 # 第一章：应用程序与基本执行环境
 
 本章实现了一个最简单的 RISC-V S 态裸机程序（tg-rcore-tutorial-ch1），展示操作系统的最小执行环境。程序在 QEMU 模拟的 RISC-V 64 硬件上运行，不依赖 OpenSBI 或 RustSBI，通过 `-bios none` 模式直接启动，打印 `Hello, world!` 后关机。

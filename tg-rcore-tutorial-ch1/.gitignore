@@ -3,4 +3,4 @@ target
 *.bin
 *.img
 Cargo.lock
-tg-rcore-tutorial-games
+ch1-tangram
