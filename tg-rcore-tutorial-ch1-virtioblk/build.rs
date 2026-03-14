@@ -2,6 +2,17 @@ use std::{env, fs, path::PathBuf};
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
+    
+    // Cargo strongly discourages modifying CARGO_MANIFEST_DIR. 
+    // The idiomatic workaround for OS development is to traverse up from OUT_DIR to the target profile directory.
+    let out_dir = PathBuf::from(env::var_os("OUT_DIR").unwrap());
+    let target_dir = out_dir.parent().unwrap().parent().unwrap().parent().unwrap();
+    let disk_img = target_dir.join("disk.img");
+
+    if !disk_img.exists() {
+        let file = std::fs::File::create(&disk_img).unwrap();
+        file.set_len(64 * 1024 * 1024).unwrap();
+    }
     if env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default() == "riscv64" {
         let out_dir = PathBuf::from(env::var_os("OUT_DIR").unwrap());
         let ld = out_dir.join("linker.ld");
