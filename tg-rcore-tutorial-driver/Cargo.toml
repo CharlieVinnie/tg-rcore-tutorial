@@ -1,7 +1,33 @@
 [package]
 name = "tg-rcore-tutorial-driver"
-version = "0.1.0"
 edition = "2024"
+version = "0.1.0-preview.1"
+authors = [
+    "Ziyan Wang <charliewang.cpp@gmail.com>",
+]
+description = "device drivers for tg-rcore-tutorial"
+repository = "https://github.com/CharlieVinnie/tg-rcore-tutorial"
+keywords = [
+    "ai",
+    "ai4ose",
+    "kernel",
+    "learning",
+    "os",
+]
+categories = [
+    "no-std",
+    "embedded",
+]
+license = "GPL-3.0"
+autolib = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
+
+[lib]
+name = "tg_rcore_tutorial_driver"
+path = "src/lib.rs"
 
 [dependencies]
 virtio-drivers = "0.1.0"
@@ -9,4 +35,4 @@ embedded-graphics = "0.7"
 tinybmp = "0.3"
 spin = "0.9"
 riscv = "0.10"
-tg-console = { package = "tg-rcore-tutorial-console", path = "../tg-rcore-tutorial-console", version = "0.4.5" }
+tg-console = { package = "tg-rcore-tutorial-console", version = "0.4.5" }
