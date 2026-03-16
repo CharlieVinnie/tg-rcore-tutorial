@@ -307,7 +307,6 @@ mod impls {
                 }
             }
             let path_str = unsafe { core::str::from_utf8_unchecked(core::slice::from_raw_parts(path as *const u8, count)) };
-            println!("path_str is {}", path_str);
             // hardcoded paths
             if path_str == "/dev/fb0" {
                 GPU_FD as isize
