@@ -1,0 +1,95 @@
+[package]
+name = "tg-rcore-tutorial-games-ch2-moving-tangram-user"
+edition = "2024"
+version = "0.1.0-preview.1"
+authors = [
+    "Ziyan Wang <charliewang.cpp@gmail.com>",
+]
+build = "build.rs"
+description = "User-space game for tg-rcore-tutorial ch2"
+repository = "https://github.com/CharlieVinnie/tg-rcore-tutorial"
+homepage = "https://github.com/CharlieVinnie/tg-rcore-tutorial/tree/game"
+keywords = [
+    "ai",
+    "ai4ose",
+    "kernel",
+    "learning",
+    "os",
+]
+categories = [
+    "no-std",
+    "embedded",
+]
+license = "GPL-3.0"
+autolib = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
+
+[[bin]]
+name = "ch2-moving-tangram-1"
+path = "src/os1.rs"
+
+[[bin]]
+name = "ch2-moving-tangram-2"
+path = "src/os2.rs"
+
+[[bin]]
+name = "ch2-moving-tangram-3"
+path = "src/os3.rs"
+
+[[bin]]
+name = "ch2-moving-tangram-4"
+path = "src/os4.rs"
+
+[[bin]]
+name = "ch2-moving-tangram-5"
+path = "src/os5.rs"
+
+[[bin]]
+name = "ch2-moving-tangram-6"
+path = "src/os6.rs"
+
+[[bin]]
+name = "ch2-moving-tangram-7"
+path = "src/os7.rs"
+
+[[bin]]
+name = "ch2-moving-tangram-8"
+path = "src/os8.rs"
+
+[[bin]]
+name = "ch2-moving-tangram-9"
+path = "src/os9.rs"
+
+[[bin]]
+name = "ch2-moving-tangram-10"
+path = "src/os10.rs"
+
+[[bin]]
+name = "ch2-moving-tangram-11"
+path = "src/os11.rs"
+
+[[bin]]
+name = "ch2-moving-tangram-12"
+path = "src/os12.rs"
+
+[[bin]]
+name = "ch2-moving-tangram-13"
+path = "src/os13.rs"
+
+[lib]
+name = "games_lib"
+path = "src/lib.rs"
+
+[dependencies]
+tg-console = { package = "tg-rcore-tutorial-console", version = "0.4.2-preview.7" }
+tg-syscall = { package = "tg-rcore-tutorial-games-syscall", version = "0.1.0-preview.1", features = ["user"] }
+customizable-buddy = "0.0.2"
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
