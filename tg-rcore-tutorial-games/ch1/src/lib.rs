@@ -6,14 +6,13 @@
 //! - 其余辅助函数（sleep/pipe_*）展示了常见 syscall 组合用法。
 
 mod heap;
-mod syscall;
 
 extern crate alloc;
 
 use tg_console::log;
 
 pub use tg_console::{print, println};
-pub use syscall::*;
+pub use tg_syscall::*;
 
 #[unsafe(no_mangle)]
 #[unsafe(link_section = ".text.entry")]

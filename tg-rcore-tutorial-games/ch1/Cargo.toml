@@ -1,7 +1,7 @@
 [package]
 name = "tg-rcore-tutorial-games-ch1-tangram-user"
 edition = "2024"
-version = "0.1.0-preview.1"
+version = "0.1.0-preview.2"
 authors = [
     "Ziyan Wang <charliewang.cpp@gmail.com>",
 ]
@@ -36,7 +36,7 @@ path = "src/lib.rs"
 
 [dependencies]
 tg-console = { package = "tg-rcore-tutorial-console", version = "0.4.2-preview.7" }
-tg-syscall = { package = "tg-rcore-tutorial-syscall", version = "0.4.2-preview.7", features = ["user"] }
+tg-syscall = { package = "tg-rcore-tutorial-games-syscall", version = "0.1.0-preview.1", features = ["user"] }
 customizable-buddy = "0.0.2"
 
 [profile.dev]
