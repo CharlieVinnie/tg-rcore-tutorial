@@ -1,0 +1,51 @@
+[package]
+name = "tg-rcore-tutorial-games-ch4-tetris-user"
+edition = "2024"
+version = "0.1.0-preview.1"
+authors = [
+    "Ziyan Wang <charliewang.cpp@gmail.com>",
+]
+build = "build.rs"
+description = "User-space game for tg-rcore-tutorial ch4"
+repository = "https://github.com/CharlieVinnie/tg-rcore-tutorial"
+homepage = "https://github.com/CharlieVinnie/tg-rcore-tutorial/tree/game"
+keywords = [
+    "ai",
+    "ai4ose",
+    "kernel",
+    "learning",
+    "os",
+]
+categories = [
+    "no-std",
+    "embedded",
+]
+license = "GPL-3.0"
+autolib = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
+
+[[bin]]
+name = "ch4-tangram"
+path = "src/bin/tangram.rs"
+
+[[bin]]
+name = "ch4-tetris"
+path = "src/bin/tetris.rs"
+
+[lib]
+name = "games_lib"
+path = "src/lib.rs"
+
+[dependencies]
+tg-console = { package = "tg-rcore-tutorial-console", version = "0.4.2-preview.7" }
+tg-syscall = { package = "tg-rcore-tutorial-games-syscall", version = "0.1.0-preview.1", features = ["user"] }
+customizable-buddy = "0.0.2"
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
