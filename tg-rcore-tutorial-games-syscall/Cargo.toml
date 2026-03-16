@@ -1,0 +1,33 @@
+[package]
+name = "tg-rcore-tutorial-games-syscall"
+description = "System call definitions and interfaces for tg-rcore tutorial games."
+version = "0.1.0-preview.1"
+edition = "2024"
+authors = ["Ziyan Wang <charliewang.cpp@gmail.com>"]
+repository = "https://github.com/CharlieVinnie/tg-rcore-tutorial-games-syscall"
+homepage = "https://github.com/CharlieVinnie/tg-rcore-tutorial-games-syscall/tree/game"
+license = "GPL-3.0"
+readme = "README.md"
+keywords = [
+    "ai",
+    "ai4ose",
+    "kernel",
+    "learning",
+    "os",
+]
+categories = [
+    "no-std",
+    "embedded",
+]
+
+[dependencies]
+spin = "0.9"
+bitflags = "1.2"
+tg-signal-defs = { package = "tg-rcore-tutorial-signal-defs", version = "0.4.5" }
+
+[features]
+kernel = []
+user = []
+
+[package.metadata.docs.rs]
+targets = ["riscv64gc-unknown-none-elf"]
