@@ -9,17 +9,20 @@ target = "riscv64gc-unknown-none-elf"
 runner = [
     "qemu-system-riscv64",
     "-machine", "virt",       # 使用 QEMU virt 虚拟平台
-    "-device", "virtio-gpu-device,xres=1024,yres=768", # 启用 VirtIO GPU
+    "-device", "virtio-gpu-device,xres=800,yres=600", # 启用 VirtIO GPU
     "-device", "virtio-keyboard-device",
     "-display", "sdl",
-    "-d", "in_asm",
-    "-D", "qemu.log",
     "-serial", "stdio",       # 保证控制台继续输出到终端
     "-bios", "none",          # 不加载外部 BIOS/SBI 固件（tg-sbi 内建）
     "-kernel",                # 后接 ELF 可执行文件路径（由 cargo 自动填充）
 ]
 
 [env]
-TG_GAMES_CRATE    = "tg-rcore-tutorial-games"
-TG_GAMES_LOCAL_DIR = "tg-rcore-tutorial-games"
-TG_GAMES_VERSION  = "0.1.0"
+TG_GAME_CRATE    = "tg-rcore-tutorial-games-ch4-tetris-user"
+TG_GAME_LOCAL_DIR = "tg-rcore-tutorial-games/ch4"
+TG_GAME_CACHE = "ch4-tetris"
+TG_GAME_BIN = "ch4-tetris"
+TG_GAME_VERSION  = "0.1.0-preview.1"
+TG_GAME_APPS = "ch4-tetris"
+TG_GAME_BASE = "0x0"
+TG_GAME_STEP = "0x0"

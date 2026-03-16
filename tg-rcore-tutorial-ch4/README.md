@@ -1,3 +1,5 @@
+### This repo is based on https://github.com/rcore-os/tg-rcore-tutorial.
+
 # 第四章：地址空间
 
 本章在第三章"多道程序与分时多任务"的基础上，引入了 **RISC-V Sv39 虚拟内存机制**，为每个用户进程提供**独立的地址空间**（tg-rcore-tutorial-ch4）。这是操作系统实现**进程隔离**和**内存保护**的关键一步。
