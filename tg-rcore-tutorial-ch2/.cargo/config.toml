@@ -17,7 +17,11 @@ runner = [
 ]
 
 [env]
-TG_GAMES_CRATE    = "tg-rcore-tutorial-games"
-TG_GAMES_LOCAL_DIR = "tg-rcore-tutorial-games"
-TG_GAMES_VERSION  = "0.1.0"
-
+TG_GAME_CRATE    = "tg-rcore-tutorial-games-ch2-moving-tangram-user"
+TG_GAME_LOCAL_DIR = "tg-rcore-tutorial-games/ch2"
+TG_GAME_CACHE = "ch2-moving-tangram"
+TG_GAME_BIN = "ch2-moving-tangram"
+TG_GAME_VERSION  = "0.1.0-preview.1"
+TG_GAME_APPS = "ch2-moving-tangram-1,ch2-moving-tangram-2,ch2-moving-tangram-3,ch2-moving-tangram-4,ch2-moving-tangram-5,ch2-moving-tangram-6,ch2-moving-tangram-7,ch2-moving-tangram-8,ch2-moving-tangram-9,ch2-moving-tangram-10,ch2-moving-tangram-11,ch2-moving-tangram-12,ch2-moving-tangram-13"
+TG_GAME_BASE = "0x80600000"
+TG_GAME_STEP = "0x200000"

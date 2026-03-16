@@ -1,3 +1,5 @@
+### This repo is based on https://github.com/rcore-os/tg-rcore-tutorial.
+
 # 第二章：批处理系统
 
 本章在第一章"最小执行环境"的基础上，实现了一个**批处理操作系统**（tg-rcore-tutorial-ch2）。它能够依次加载并运行多个用户程序，支持特权级切换和 Trap 处理，并实现了 `write` 和 `exit` 两个系统调用。

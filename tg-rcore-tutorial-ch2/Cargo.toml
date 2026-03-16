@@ -1,19 +1,22 @@
 [package]
-name = "tg-rcore-tutorial-ch2"
-description = "Chapter 2 of rCore Tutorial: Batch processing system with privilege levels and trap handling."
-version = "0.4.5"
+name = "tg-rcore-tutorial-games-ch2-moving-tangram-kernel"
 edition = "2024"
-authors = ["YdrMaster <ydrml@hotmail.com>","Yifan Wang<w-yf22@mails.tsinghua.edu.cn>","Yu Chen <yuchen@tsinghua.edu.cn>"]
-repository = "https://github.com/rcore-os/tg-rcore-tutorial-ch2"
-homepage = "https://github.com/rcore-os/tg-rcore-tutorial-ch2/tree/test"
-documentation = "https://docs.rs/tg-rcore-tutorial-ch2"
+version = "0.1.0-preview.1"
+authors = ["Ziyan Wang <charliewang.cpp@gmail.com>"]
+description = "Kernel support for game of ch2 of tg-rcore tutorial"
+repository = "https://github.com/CharlieVinnie/tg-rcore-tutorial"
 license = "GPL-3.0"
 readme = "README.md"
-keywords = ["rcore", "tutorial", "no-std", "riscv", "batch-system"]
-categories = ["no-std", "embedded"]
-exclude = [
-    "tg-user/**",
-#    ".cargo/config.toml",
+keywords = [
+    "ai",
+    "ai4ose",
+    "kernel",
+    "learning",
+    "os",
+]
+categories = [
+    "no-std",
+    "embedded",
 ]
 
 [profile.dev]
@@ -28,14 +31,12 @@ spin = "0.9"
 virtio-drivers = "0.1.0"
 buddy_system_allocator = "0.9"
 
-tg-sbi = { package = "tg-rcore-tutorial-sbi", path = "../tg-rcore-tutorial-sbi", version = "0.4.5", features = ["nobios"] }
-tg-linker = { package = "tg-rcore-tutorial-linker", path = "../tg-rcore-tutorial-linker", version = "0.4.5" }
-tg-console = { package = "tg-rcore-tutorial-console", path = "../tg-rcore-tutorial-console", version = "0.4.5" }
-tg-kernel-context = { package = "tg-rcore-tutorial-kernel-context", path = "../tg-rcore-tutorial-kernel-context", version = "0.4.5" }
-tg-syscall = { package = "tg-rcore-tutorial-syscall", path = "../tg-rcore-tutorial-syscall", version = "0.4.5", features = ["kernel"] }
-tg-driver = { package = "tg-rcore-tutorial-driver", path = "../tg-rcore-tutorial-driver" }
+tg-sbi = { package = "tg-rcore-tutorial-sbi", version = "0.4.5", features = ["nobios"] }
+tg-linker = { package = "tg-rcore-tutorial-linker", version = "0.4.5" }
+tg-console = { package = "tg-rcore-tutorial-console", version = "0.4.5" }
+tg-kernel-context = { package = "tg-rcore-tutorial-kernel-context", version = "0.4.5" }
+tg-syscall = { package = "tg-rcore-tutorial-games-syscall", version = "0.1.0-preview.1", features = ["kernel"] }
+tg-driver = { package = "tg-rcore-tutorial-driver", version = "0.1.0-preview.1" }
 
 [build-dependencies]
-tg-linker = { package = "tg-rcore-tutorial-linker", path = "../tg-rcore-tutorial-linker", version = "0.4.5" }
-serde = { version = "1", features = ["derive"] }
-toml = "0.8"
+tg-linker = { package = "tg-rcore-tutorial-linker", version = "0.4.5" }
