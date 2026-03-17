@@ -1,3 +1,5 @@
+### This repo is based on https://github.com/rcore-os/tg-rcore-tutorial.
+
 # 第五章：进程
 
 本章在第四章"地址空间"的基础上，引入了完整的 **进程管理** 机制，实现了 `fork`、`exec`、`waitpid` 等核心系统调用。进程是操作系统中最重要的抽象之一——它将"运行中的程序"封装为一个可管理的实体，使得用户可以动态创建、终止、等待进程，并通过 Shell 与操作系统交互。

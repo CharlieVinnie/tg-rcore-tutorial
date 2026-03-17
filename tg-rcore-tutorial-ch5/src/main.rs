@@ -39,6 +39,9 @@
 // 在非 RISC-V 架构上允许未使用的代码（用于 IDE 开发体验）
 #![cfg_attr(not(target_arch = "riscv64"), allow(dead_code, unused_imports))]
 
+mod device_manager;
+mod kernel_space;
+mod user_reader;
 /// 进程模块：定义 Process 结构体及其方法（from_elf、fork、exec 等）
 mod process;
 /// 处理器模块：定义 PROCESSOR 全局变量和进程管理器 ProcManager
@@ -50,12 +53,11 @@ extern crate tg_console;
 extern crate alloc;
 
 use crate::{
-    impls::{Console, Sv39Manager, SyscallContext},
-    process::Process,
-    processor::{ProcManager, PROCESSOR},
+    device_manager::{DEVICES, init_devices}, impls::{Console, SyscallContext}, kernel_space::{KERNEL_SPACE, Sv39Manager}, process::Process, processor::{PROCESSOR, ProcManager}
 };
 use alloc::{alloc::alloc, collections::BTreeMap};
-use core::{alloc::Layout, cell::UnsafeCell, ffi::CStr, mem::MaybeUninit};
+use tg_driver::visit_virtio_ranges;
+use core::{alloc::Layout, ffi::CStr};
 use riscv::register::*;
 use spin::Lazy;
 #[cfg(not(target_arch = "riscv64"))]
@@ -65,8 +67,7 @@ use tg_kernel_context::foreign::MultislotPortal;
 #[cfg(target_arch = "riscv64")]
 use tg_kernel_vm::page_table::Sv39;
 use tg_kernel_vm::{
-    page_table::{MmuMeta, VAddr, VmFlags, VmMeta, PPN, VPN},
-    AddressSpace,
+    AddressSpace, MapVisibility, page_table::{MmuMeta, PPN, VAddr, VPN, VmFlags, VmMeta}
 };
 use tg_sbi;
 use tg_syscall::Caller;
@@ -131,37 +132,6 @@ const MEMORY: usize = 48 << 20;
 /// 用于解决切换 satp（页表基地址）时代码地址失效的问题。
 const PROTAL_TRANSIT: VPN<Sv39> = VPN::MAX;
 
-/// 内核地址空间的全局存储
-///
-/// 使用 UnsafeCell + MaybeUninit 实现延迟初始化，
-/// 因为内核地址空间需要在堆分配器初始化之后才能创建。
-struct KernelSpace {
-    inner: UnsafeCell<MaybeUninit<AddressSpace<Sv39, Sv39Manager>>>,
-}
-
-unsafe impl Sync for KernelSpace {}
-
-impl KernelSpace {
-    const fn new() -> Self {
-        Self {
-            inner: UnsafeCell::new(MaybeUninit::uninit()),
-        }
-    }
-
-    /// 写入内核地址空间（仅在初始化时调用一次）
-    unsafe fn write(&self, space: AddressSpace<Sv39, Sv39Manager>) {
-        unsafe { *self.inner.get() = MaybeUninit::new(space) };
-    }
-
-    /// 获取内核地址空间的不可变引用
-    unsafe fn assume_init_ref(&self) -> &AddressSpace<Sv39, Sv39Manager> {
-        unsafe { &*(*self.inner.get()).as_ptr() }
-    }
-}
-
-/// 内核地址空间全局实例
-static KERNEL_SPACE: KernelSpace = KernelSpace::new();
-
 /// 应用程序名称到 ELF 数据的映射表
 ///
 /// 在首次访问时通过 `Lazy` 初始化：
@@ -218,6 +188,7 @@ extern "C" fn rust_main() -> ! {
     assert!(portal_layout.size() < 1 << Sv39::PAGE_BITS);
     // 步骤 5：建立内核地址空间并激活 Sv39 分页
     kernel_space(layout, MEMORY, portal_ptr as _);
+    init_devices();
     // 步骤 6：初始化异界传送门（设置传送门页面的虚拟地址和 slot 数量）
     let portal = unsafe { MultislotPortal::init_transit(PROTAL_TRANSIT.base().val(), 1) };
     // 步骤 7：初始化系统调用处理器
@@ -227,8 +198,8 @@ extern "C" fn rust_main() -> ! {
     tg_syscall::init_clock(&SyscallContext);
     tg_syscall::init_memory(&SyscallContext);
     // 步骤 8：加载初始进程 initproc
-    // initproc 是所有用户进程的祖先，它会 fork 出 shell 进程
-    let initproc_data = APPS.get("initproc").unwrap();
+    const INITPROC: &str = env!("INITPROC");
+    let initproc_data = APPS.get(INITPROC).expect(alloc::format!("INITPROC {INITPROC} is not found").as_str());
     if let Some(process) = Process::from_elf(ElfFile::new(initproc_data).unwrap()) {
         // 初始化进程管理器并添加 initproc
         PROCESSOR.get_mut().set_manager(ProcManager::new());
@@ -274,6 +245,10 @@ extern "C" fn rust_main() -> ! {
                             unsafe { (*processor).make_current_exited(-2) };
                         }
                     }
+                }
+                scause::Trap::Interrupt(scause::Interrupt::SupervisorExternal) => {
+                    DEVICES.get().unwrap().handle_external_interrupt();
+                    unsafe { (*processor).make_current_suspend() };
                 }
                 // ─── 其他异常/中断：杀死进程 ───
                 e => {
@@ -325,6 +300,7 @@ fn kernel_space(layout: tg_linker::KernelLayout, memory: usize, portal: usize) {
             s.floor()..e.ceil(),
             PPN::new(s.floor().val()),
             build_flags(flags),
+            MapVisibility::PRIVATE,
         )
     }
     // 映射堆区域（内核镜像结束处到物理内存末尾）
@@ -335,6 +311,7 @@ fn kernel_space(layout: tg_linker::KernelLayout, memory: usize, portal: usize) {
         s.floor()..e.ceil(),
         PPN::new(s.floor().val()),
         build_flags("_WRV"),
+        MapVisibility::PRIVATE,
     );
     // 映射异界传送门页面到虚拟地址空间最高页
     // 标志位 __G_XWRV：全局、可执行、可写、可读、有效
@@ -342,12 +319,25 @@ fn kernel_space(layout: tg_linker::KernelLayout, memory: usize, portal: usize) {
         PROTAL_TRANSIT..PROTAL_TRANSIT + 1,
         PPN::new(portal >> Sv39::PAGE_BITS),
         build_flags("__G_XWRV"),
+        MapVisibility::PRIVATE,
+    );
+    visit_virtio_ranges(
+        |start, end| {
+            assert!(start.trailing_zeros() >= Sv39::PAGE_BITS as _);
+            assert!(end.trailing_zeros() >= Sv39::PAGE_BITS as _);
+            space.map_extern(
+                VPN::new(start >> Sv39::PAGE_BITS)..VPN::new(end >> Sv39::PAGE_BITS),
+                PPN::new(start >> Sv39::PAGE_BITS),
+                build_flags("_WRV"),
+                MapVisibility::PRIVATE,
+            );
+        }
     );
     println!();
     // 激活 Sv39 分页模式：写入 satp 寄存器
     unsafe { satp::set(satp::Mode::Sv39, 0, space.root_ppn().val()) };
     // 保存内核地址空间到全局变量
-    unsafe { KERNEL_SPACE.write(space) };
+    KERNEL_SPACE.init(space);
 }
 
 /// 将内核地址空间中的异界传送门页表项复制到用户地址空间
@@ -356,112 +346,26 @@ fn kernel_space(layout: tg_linker::KernelLayout, memory: usize, portal: usize) {
 /// 使得切换 satp 时代码仍然可以正常执行。
 fn map_portal(space: &AddressSpace<Sv39, Sv39Manager>) {
     let portal_idx = PROTAL_TRANSIT.index_in(Sv39::MAX_LEVEL);
-    space.root()[portal_idx] = unsafe { KERNEL_SPACE.assume_init_ref() }.root()[portal_idx];
+    space.root()[portal_idx] = KERNEL_SPACE.get().root()[portal_idx];
 }
 
-/// 各种接口库的实现
-///
-/// 本模块为 tg-syscall 提供的各个 trait 提供具体实现，
-/// 包括 IO、Process、Scheduling、Clock、Memory 等系统调用接口。
+
 mod impls {
-    use crate::{
-        build_flags, process::Process as ProcStruct, processor::ProcManager, Sv39, APPS, PROCESSOR,
-    };
-    use alloc::alloc::alloc_zeroed;
-    use core::{alloc::Layout, ptr::NonNull};
+    use core::ptr::NonNull;
+
+    use crate::{APPS, Sv39, build_flags, device_manager::DEVICES, kernel_space::Sv39Manager, process, processor::{PROCESSOR, ProcManager}, user_reader::read_zero_ended_list};
     use tg_console::log;
+    use tg_driver::InputEvent;
     use tg_kernel_vm::{
-        page_table::{MmuMeta, Pte, VAddr, VmFlags, PPN, VPN},
-        PageManager,
+        AddressSpace, MapVisibility, page_table::{MmuMeta, PPN, VAddr, VmFlags}
     };
     use tg_syscall::*;
     use tg_task_manage::{PManager, ProcId};
+
+    use process::Process as ProcStruct;
     use xmas_elf::ElfFile;
 
-    // ─── Sv39 页表管理器 ───
-
-    /// Sv39 页表管理器
-    ///
-    /// 实现 `PageManager<Sv39>` trait，负责：
-    /// - 物理页面的分配和释放
-    /// - 物理地址与虚拟地址的转换（恒等映射下两者相等）
-    /// - 页面所有权标记（OWNED 标志位）
-    #[repr(transparent)]
-    pub struct Sv39Manager(NonNull<Pte<Sv39>>);
-
-    impl Sv39Manager {
-        /// 自定义标志位：标记此页面由内核分配（用于区分恒等映射的外部页面）
-        const OWNED: VmFlags<Sv39> = unsafe { VmFlags::from_raw(1 << 8) };
-
-        /// 分配对齐的物理页面（已清零）
-        #[inline]
-        fn page_alloc<T>(count: usize) -> *mut T {
-            unsafe {
-                alloc_zeroed(Layout::from_size_align_unchecked(
-                    count << Sv39::PAGE_BITS,
-                    1 << Sv39::PAGE_BITS,
-                ))
-            }
-            .cast()
-        }
-    }
-
-    impl PageManager<Sv39> for Sv39Manager {
-        /// 创建新的根页表
-        #[inline]
-        fn new_root() -> Self {
-            Self(NonNull::new(Self::page_alloc(1)).unwrap())
-        }
-
-        /// 获取根页表的物理页号
-        #[inline]
-        fn root_ppn(&self) -> PPN<Sv39> {
-            PPN::new(self.0.as_ptr() as usize >> Sv39::PAGE_BITS)
-        }
-
-        /// 获取根页表的指针
-        #[inline]
-        fn root_ptr(&self) -> NonNull<Pte<Sv39>> {
-            self.0
-        }
-
-        /// 物理页号转虚拟地址（恒等映射下直接转换）
-        #[inline]
-        fn p_to_v<T>(&self, ppn: PPN<Sv39>) -> NonNull<T> {
-            unsafe { NonNull::new_unchecked(VPN::<Sv39>::new(ppn.val()).base().as_mut_ptr()) }
-        }
-
-        /// 虚拟地址转物理页号（恒等映射下直接转换）
-        #[inline]
-        fn v_to_p<T>(&self, ptr: NonNull<T>) -> PPN<Sv39> {
-            PPN::new(VAddr::<Sv39>::new(ptr.as_ptr() as _).floor().val())
-        }
-
-        /// 检查页表项是否由内核分配
-        #[inline]
-        fn check_owned(&self, pte: Pte<Sv39>) -> bool {
-            pte.flags().contains(Self::OWNED)
-        }
-
-        /// 分配物理页面并标记为内核所有
-        #[inline]
-        fn allocate(&mut self, len: usize, flags: &mut VmFlags<Sv39>) -> NonNull<u8> {
-            *flags |= Self::OWNED;
-            NonNull::new(Self::page_alloc(len)).unwrap()
-        }
-
-        fn deallocate(&mut self, _pte: Pte<Sv39>, _len: usize) -> usize {
-            todo!()
-        }
-
-        fn drop_root(&mut self) {
-            todo!()
-        }
-    }
-
-    // ─── 控制台实现 ───
-
-    /// 控制台输出实现，通过 SBI 接口逐字符输出
+    /// 控制台实现：通过 SBI 逐字符输出
     pub struct Console;
 
     impl tg_console::Console for Console {
@@ -471,27 +375,34 @@ mod impls {
         }
     }
 
-    // ─── 系统调用实现 ───
-
-    /// 系统调用上下文，实现 IO、Process、Scheduling、Clock、Memory 等 trait
+    /// 系统调用上下文实现
     pub struct SyscallContext;
+    
+    const GPU_FD: usize = 3;
+    const KEYBOARD_FD: usize = 4;
+    const FB_FLUSH: usize = 1;
+    const FB_GET_RESOLUTION: usize = 2;
 
-    /// IO 系统调用实现：write 和 read
+    const READABLE: VmFlags<Sv39> = build_flags("URV");
+    const WRITABLE: VmFlags<Sv39> = build_flags("UWRV");
+
+    fn current_address_space() -> &'static mut AddressSpace<Sv39, Sv39Manager> {
+        &mut PROCESSOR.get_mut().current().unwrap().address_space
+    }
+
+    fn translate_current<T>(addr: usize, flags: VmFlags<Sv39>) -> Option<NonNull<T>> {
+        current_address_space().translate::<T>(VAddr::new(addr), flags)
+    }
+
+    /// IO 系统调用实现
+    ///
+    /// **与前几章的关键区别**：用户传入的 `buf` 是虚拟地址，
+    /// 需要通过 `address_space.translate()` 翻译为物理地址才能访问。
     impl IO for SyscallContext {
-        /// write 系统调用：将数据写入标准输出
-        ///
-        /// 需要通过 `translate()` 将用户虚拟地址翻译为物理地址，
-        /// 并检查可读权限后才能访问用户缓冲区。
         fn write(&self, _caller: Caller, fd: usize, buf: usize, count: usize) -> isize {
             match fd {
                 STDOUT | STDDEBUG => {
-                    const READABLE: VmFlags<Sv39> = build_flags("RV");
-                    if let Some(ptr) = PROCESSOR
-                        .get_mut()
-                        .current()
-                        .unwrap()
-                        .address_space
-                        .translate::<u8>(VAddr::new(buf), READABLE)
+                    if let Some(ptr) = translate_current::<u8>(buf, READABLE)
                     {
                         print!("{}", unsafe {
                             core::str::from_utf8_unchecked(core::slice::from_raw_parts(
@@ -512,21 +423,14 @@ mod impls {
             }
         }
 
-        /// read 系统调用：从标准输入读取数据
-        ///
-        /// 通过 SBI console_getchar 接口逐字符读取，
-        /// 同样需要地址翻译和可写权限检查。
-        #[inline]
         fn read(&self, _caller: Caller, fd: usize, buf: usize, count: usize) -> isize {
-            if fd == STDIN {
-                const WRITEABLE: VmFlags<Sv39> = build_flags("W_V");
-                if let Some(mut ptr) = PROCESSOR
-                    .get_mut()
-                    .current()
-                    .unwrap()
-                    .address_space
-                    .translate::<u8>(VAddr::new(buf), WRITEABLE)
-                {
+            match fd {
+                STDIN => {
+                    let Some(mut ptr) = translate_current::<u8>(buf, WRITABLE)
+                    else {
+                        log::error!("ptr not writable");
+                        return -1;
+                    };
                     let mut ptr = unsafe { ptr.as_mut() } as *mut u8;
                     for _ in 0..count {
                         let c = tg_sbi::console_getchar() as u8;
@@ -536,18 +440,92 @@ mod impls {
                         }
                     }
                     count as _
-                } else {
-                    log::error!("ptr not writeable");
+                }
+                KEYBOARD_FD => {
+                    let Some(mut ptr) = translate_current::<InputEvent>(buf, WRITABLE)
+                    else {
+                        log::error!("ptr not writable");
+                        return -1;
+                    };
+                    let Some(keyboard) = DEVICES.get().unwrap().get_keyboard()
+                    else {
+                        tg_console::log::error!("Keyboard not initialized");
+                        return -1;
+                    };
+                    let mut read_count = 0;
+                    while read_count + core::mem::size_of::<InputEvent>() <= count {
+                        let Some(event) = keyboard.read_event() else { break; };
+                        let event_ptr = ptr.as_ptr();
+                        unsafe { event_ptr.write_volatile(event); }
+                        ptr = unsafe { ptr.add(core::mem::size_of::<InputEvent>()) };
+                        read_count += core::mem::size_of::<InputEvent>();
+                    }
+                    read_count as isize
+                }
+                _ => {
+                    tg_console::log::error!("unsupported fd: {fd}");
                     -1
                 }
+            }
+        }
+
+        fn open(&self, _caller: tg_syscall::Caller, path: usize, _flags: usize) -> isize {
+            let Ok(path_slice) = read_zero_ended_list(current_address_space(), path)
+            else {
+                log::error!("path not readable");
+                return -1;
+            };
+            let path_str = unsafe { core::str::from_utf8_unchecked(path_slice) };
+            // hardcoded paths
+            if path_str == "/dev/fb0" {
+                GPU_FD as isize
+            } else if path_str == "/dev/input0" {
+                KEYBOARD_FD as isize
             } else {
-                log::error!("unsupported fd: {fd}");
                 -1
+            }
+        }
+
+        fn ioctl(&self, _caller: tg_syscall::Caller, fd: usize, request: usize, argp: usize) -> isize {
+            match fd {
+                GPU_FD => {
+                    let Some(gpu) = DEVICES.get().unwrap().get_gpu() else {
+                        tg_console::log::error!("GPU not initialized");
+                        return -1;
+                    };
+                    match request {
+                        FB_FLUSH => {
+                            gpu.flush().unwrap();
+                            0
+                        }
+                        FB_GET_RESOLUTION => {
+                            let (w, h) = gpu.resolution().unwrap();
+                            let Some(res_ptr) = translate_current::<u32>(argp, WRITABLE)
+                            else {
+                                tg_console::log::error!("argp not writable");
+                                return -1;
+                            };
+                            unsafe {
+                                res_ptr.write_volatile(w as u32);
+                                res_ptr.add(1).write_volatile(h as u32);
+                            }
+                            0
+                        }
+                        _ => {
+                            tg_console::log::error!("unsupported request: {request}");
+                            -1
+                        }
+                    }
+                }
+                _ => {
+                    tg_console::log::error!("unsupported fd: {fd}");
+                    -1
+                }
             }
         }
     }
 
-    /// 进程管理系统调用实现
+    /// Process 系统调用实现
     impl Process for SyscallContext {
         /// exit 系统调用：退出当前进程
         ///
@@ -584,9 +562,7 @@ mod impls {
         fn exec(&self, _caller: Caller, path: usize, count: usize) -> isize {
             const READABLE: VmFlags<Sv39> = build_flags("RV");
             let current = PROCESSOR.get_mut().current().unwrap();
-            current
-                .address_space
-                .translate::<u8>(VAddr::new(path), READABLE)
+            translate_current::<u8>(path, READABLE)
                 .map(|ptr| unsafe {
                     core::str::from_utf8_unchecked(core::slice::from_raw_parts(ptr.as_ptr(), count))
                 })
@@ -613,15 +589,11 @@ mod impls {
         /// 返回值：成功返回子进程 PID，无子进程返回 -1
         fn wait(&self, _caller: Caller, pid: isize, exit_code_ptr: usize) -> isize {
             let processor: *mut PManager<ProcStruct, ProcManager> = PROCESSOR.get_mut() as *mut _;
-            let current = unsafe { (*processor).current().unwrap() };
-            const WRITABLE: VmFlags<Sv39> = build_flags("W_V");
             if let Some((dead_pid, exit_code)) =
                 unsafe { (*processor).wait(ProcId::from_usize(pid as usize)) }
             {
                 // 将退出码写入用户空间指针（需地址翻译）
-                if let Some(mut ptr) = current
-                    .address_space
-                    .translate::<i32>(VAddr::new(exit_code_ptr), WRITABLE)
+                if let Some(mut ptr) = translate_current::<i32>(exit_code_ptr, WRITABLE)
                 {
                     unsafe { *ptr.as_mut() = exit_code as i32 };
                 }
@@ -647,9 +619,7 @@ mod impls {
             let processor: *mut PManager<ProcStruct, ProcManager> = PROCESSOR.get_mut() as *mut _;
             let current = unsafe { (*processor).current().unwrap() };
             
-            if let Some(name) = current
-                .address_space
-                .translate::<u8>(VAddr::new(path), READABLE)
+            if let Some(name) = translate_current::<u8>(path, READABLE)
                 .map(|ptr| unsafe {
                     core::str::from_utf8_unchecked(core::slice::from_raw_parts(ptr.as_ptr(), count))
                 })
@@ -683,9 +653,8 @@ mod impls {
         }
     }
 
-    /// 调度系统调用实现
+    /// Scheduling 系统调用实现
     impl Scheduling for SyscallContext {
-        /// sched_yield 系统调用：主动让出 CPU
         #[inline]
         fn sched_yield(&self, _caller: Caller) -> isize {
             0
@@ -704,23 +673,16 @@ mod impls {
         }
     }
 
-    /// 时钟系统调用实现
+    /// Clock 系统调用实现
+    ///
+    /// 与前章不同：需要通过 translate() 将用户传入的 TimeSpec 指针
+    /// 翻译为内核可访问的物理地址，然后写入时间数据。
     impl Clock for SyscallContext {
-        /// clock_gettime 系统调用：获取系统时间
-        ///
-        /// 读取 RISC-V time 寄存器，转换为纳秒级时间戳，
-        /// 通过地址翻译写入用户空间的 TimeSpec 结构。
         #[inline]
         fn clock_gettime(&self, _caller: Caller, clock_id: ClockId, tp: usize) -> isize {
-            const WRITABLE: VmFlags<Sv39> = build_flags("W_V");
             match clock_id {
                 ClockId::CLOCK_MONOTONIC => {
-                    if let Some(mut ptr) = PROCESSOR
-                        .get_mut()
-                        .current()
-                        .unwrap()
-                        .address_space
-                        .translate::<TimeSpec>(VAddr::new(tp), WRITABLE)
+                    if let Some(mut ptr) = translate_current::<TimeSpec>(tp, WRITABLE)
                     {
                         let time = riscv::register::time::read() * 10000 / 125;
                         *unsafe { ptr.as_mut() } = TimeSpec {
@@ -738,50 +700,76 @@ mod impls {
         }
     }
 
-    /// 内存管理系统调用实现
+    /// Memory 系统调用实现（练习题需要完成的部分）
+    ///
+    /// - `mmap`：将物理内存映射到用户虚拟地址空间
+    /// - `munmap`：取消虚拟内存映射
+    const PROT_READ: i32 = 1;
+    const PROT_WRITE: i32 = 2;
+    const PROT_EXEC: i32 = 4;
+    const MAP_PRIVATE: i32 = 0x1;
+    const MAP_SHARED: i32 = 0x2;
+    const MAP_ANONYMOUS: i32 = 0x20;
+
     impl Memory for SyscallContext {
-        /// mmap 系统调用：映射匿名内存
+        
         fn mmap(
             &self,
             _caller: Caller,
             addr: usize,
             len: usize,
             prot: i32,
-            _flags: i32,
-            _fd: i32,
+            flags: i32,
+            fd: i32,
             _offset: usize,
         ) -> isize {
             if addr % 4096 != 0 {
                 return -1;
             }
-            if prot & !0b111 != 0 || prot == 0 {
+            if len == 0 {
                 return -1;
             }
-            if len == 0 {
-                return 0;
+
+            if (flags & MAP_ANONYMOUS) != MAP_ANONYMOUS {
+                return -1;
             }
-            
-            let mut flags_bytes = [b'U', b'_', b'_', b'_', b'V'];
-            if prot & 1 != 0 {
-                flags_bytes[3] = b'R';
+            let visibility = match flags & (MAP_PRIVATE | MAP_SHARED) {
+                MAP_PRIVATE => MapVisibility::PRIVATE,
+                MAP_SHARED => MapVisibility::SHARED,
+                _ => return -1,
+            };
+            let mut prot_bytes = [b'U', b'_', b'_', b'_', b'V'];
+            if prot & PROT_READ != 0 {
+                prot_bytes[3] = b'R';
             }
-            if prot & 2 != 0 {
-                flags_bytes[2] = b'W';
+            if prot & PROT_WRITE != 0 {
+                prot_bytes[2] = b'W';
             }
-            if prot & 4 != 0 {
-                flags_bytes[1] = b'X';
+            if prot & PROT_EXEC != 0 {
+                prot_bytes[1] = b'X';
             }
-            let flags_str = unsafe { core::str::from_utf8_unchecked(&flags_bytes) };
-            let flags = build_flags(flags_str);
-            
-            let start = VAddr::<Sv39>::new(addr).floor();
-            let end = VAddr::<Sv39>::new(addr + len).ceil();
+            let prot_str = unsafe { core::str::from_utf8_unchecked(&prot_bytes) };
+            let prot_flags = build_flags(prot_str);
             
             let process = PROCESSOR.get_mut().current().unwrap();
+
+            let start;
+            let end;
+
+            if addr != 0 {
+                start = VAddr::<Sv39>::new(addr).floor();
+                end = VAddr::<Sv39>::new(addr + len).ceil();
+            } else {
+                let brk = process.program_brk;
+                start = VAddr::<Sv39>::new(brk).floor();
+                end = VAddr::<Sv39>::new(brk + len).ceil();
+                process.program_brk = end.base().val();
+            }
             
+            // 检查冲突
             let mut conflict = false;
             for area in &process.address_space.areas {
-                if area.end > start && area.start < end {
+                if area.end() > start && area.start() < end {
                     conflict = true;
                     break;
                 }
@@ -790,11 +778,28 @@ mod impls {
                 return -1;
             }
 
-            process.address_space.map(start..end, &[], 0, flags);
-            0
+            if fd == GPU_FD as _ {
+                let gpu = DEVICES.get().unwrap().get_gpu().unwrap();
+                // Check that len completely covers gpu framebuffer
+                if len != gpu.resolution().map(|res| res.0 * res.1 * 4).unwrap() as _ {
+                    log::error!("len does not completely cover gpu framebuffer");
+                    return -1;
+                }
+
+                let fb = gpu.get_framebuffer().unwrap();
+                let fb_ptr = fb.as_ptr() as usize;
+                // check that physical framebuffer is page aligned
+                assert!((fb_ptr & ((1 << Sv39::PAGE_BITS) - 1)) == 0);
+                let fb_ppn = PPN::new(fb_ptr >> Sv39::PAGE_BITS);
+                
+                process.address_space.map_extern(start..end, fb_ppn, prot_flags, visibility);
+                start.base().val() as _
+            } else {
+                process.address_space.map(start..end, &[], 0, prot_flags, visibility);
+                start.base().val() as _
+            }
         }
 
-        /// munmap 系统调用：取消内存映射
         fn munmap(&self, _caller: Caller, addr: usize, len: usize) -> isize {
             if addr % 4096 != 0 {
                 return -1;
@@ -805,9 +810,11 @@ mod impls {
             
             let process = PROCESSOR.get_mut().current().unwrap();
             
+            // 检查这个区域是否已经映射？必须完全位于某个已有的 area 内部吗？
+            // 测试用例要求“尝试 unmap 没有映射的内存”返回 -1
             let mut mapped = false;
             for area in &process.address_space.areas {
-                if start >= area.start && end <= area.end {
+                if start >= area.start() && end <= area.end() {
                     mapped = true;
                     break;
                 }
