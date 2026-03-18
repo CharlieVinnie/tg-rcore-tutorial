@@ -28,3 +28,4 @@ Cargo.lock
 # bundle/submodules.tar.gz
 # Extracted workspace (optional - uncomment if you want to ignore extracted content)
 # workspace-full/
+sandbox
