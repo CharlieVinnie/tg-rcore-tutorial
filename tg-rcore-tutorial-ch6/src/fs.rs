@@ -83,17 +83,13 @@ impl FSManager for FileSystem {
     }
 
     /// 创建硬链接
-    fn link(&self, src: &str, dst: &str) -> isize {
-        if let Some(inode) = self.find(src) {
-            self.root.link(dst, &inode)
-        } else {
-            -1
-        }
+    fn link(&self, _src: &str, _dst: &str) -> isize {
+        unimplemented!()
     }
 
     /// 删除硬链接
-    fn unlink(&self, path: &str) -> isize {
-        self.root.unlink(path)
+    fn unlink(&self, _path: &str) -> isize {
+        unimplemented!()
     }
 }
 

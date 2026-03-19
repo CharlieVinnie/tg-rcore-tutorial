@@ -18,15 +18,14 @@
 //! - 再看 `fork`：观察地址空间和文件描述符的继承规则；
 //! - 最后看 `change_program_brk`：理解用户堆扩缩时的页映射变化。
 
-use crate::{build_flags, map_portal, parse_flags, Sv39, Sv39Manager};
-use alloc::{alloc::alloc_zeroed, vec::Vec};
+use crate::{Sv39, Sv39Manager, build_flags, file::{DiskFile, File}, map_portal, parse_flags};
+use alloc::{alloc::alloc_zeroed, sync::Arc, vec::Vec};
 use core::alloc::Layout;
 use spin::Mutex;
-use tg_easy_fs::FileHandle;
+use tg_easy_fs::{FileHandle};
 use tg_kernel_context::{foreign::ForeignContext, LocalContext};
 use tg_kernel_vm::{
-    page_table::{MmuMeta, VAddr, PPN, VPN},
-    AddressSpace,
+    AddressSpace, MapVisibility, page_table::{MmuMeta, PPN, VAddr, VPN}
 };
 use tg_task_manage::ProcId;
 use xmas_elf::{
@@ -46,12 +45,12 @@ pub struct Process {
     pub address_space: AddressSpace<Sv39, Sv39Manager>,
     /// 文件描述符表
     ///
-    /// 每个 fd 对应一个 `Option<Mutex<FileHandle>>`：
+    /// 每个 fd 对应一个 `Option<Mutex<File>>`：
     /// - `Some(...)`: 有效的文件句柄
     /// - `None`: 该 fd 已关闭或未使用
     ///
     /// 预留 fd 0/1/2 分别为 stdin/stdout/stderr。
-    pub fd_table: Vec<Option<Mutex<FileHandle>>>,
+    pub fd_table: Vec<Option<Mutex<Arc<dyn File>>>>,
     /// 堆底地址
     pub heap_bottom: usize,
     /// 当前程序 break 位置（堆顶）
@@ -89,7 +88,7 @@ impl Process {
         let foreign_ctx = ForeignContext { context, satp };
         // 复制父进程的文件描述符表
         // 子进程继承父进程所有已打开的文件
-        let mut new_fd_table: Vec<Option<Mutex<FileHandle>>> = Vec::new();
+        let mut new_fd_table: Vec<Option<Mutex<Arc<dyn File>>>> = Vec::new();
         for fd in self.fd_table.iter_mut() {
             if let Some(file) = fd {
                 new_fd_table.push(Some(Mutex::new(file.get_mut().clone())));
@@ -162,6 +161,7 @@ impl Process {
                 &elf.input[off_file..][..len_file],
                 off_mem & PAGE_MASK,
                 parse_flags(unsafe { core::str::from_utf8_unchecked(&flags) }).unwrap(),
+                MapVisibility::PRIVATE,
             );
         }
 
@@ -179,6 +179,7 @@ impl Process {
             VPN::new((1 << 26) - 2)..VPN::new(1 << 26),
             PPN::new(stack as usize >> Sv39::PAGE_BITS),
             build_flags("U_WRV"),
+            MapVisibility::PRIVATE,
         );
         // 映射异界传送门
         map_portal(&address_space);
@@ -193,9 +194,9 @@ impl Process {
             address_space,
             // 初始化文件描述符表：预留 stdin(0)、stdout(1)、stderr(2)
             fd_table: vec![
-                Some(Mutex::new(FileHandle::empty(true, false))),  // fd 0: stdin（可读）
-                Some(Mutex::new(FileHandle::empty(false, true))),  // fd 1: stdout（可写）
-                Some(Mutex::new(FileHandle::empty(false, true))),  // fd 2: stderr（可写）
+                Some(Mutex::new(Arc::new(DiskFile::new(Arc::new(FileHandle::empty(true, false)))))),  // fd 0: stdin（可读）
+                Some(Mutex::new(Arc::new(DiskFile::new(Arc::new(FileHandle::empty(false, true)))))),  // fd 1: stdout（可写）
+                Some(Mutex::new(Arc::new(DiskFile::new(Arc::new(FileHandle::empty(false, true)))))),  // fd 2: stderr（可写）
             ],
             heap_bottom,
             program_brk: heap_bottom,
@@ -219,7 +220,7 @@ impl Process {
         if size > 0 {
             if new_brk_ceil.val() > old_brk_ceil.val() {
                 self.address_space
-                    .map(old_brk_ceil..new_brk_ceil, &[], 0, build_flags("U_WRV"));
+                    .map(old_brk_ceil..new_brk_ceil, &[], 0, build_flags("U_WRV"), MapVisibility::PRIVATE);
             }
         } else if size < 0 {
             if old_brk_ceil.val() > new_brk_ceil.val() {

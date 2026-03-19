@@ -128,12 +128,10 @@ impl Hal for VirtioHal {
     /// 虚拟地址转物理地址（通过内核页表查询）
     fn virt_to_phys(vaddr: usize) -> usize {
         const VALID: VmFlags<Sv39> = build_flags("__V");
-        let ptr: NonNull<u8> = unsafe {
-            KERNEL_SPACE
-                .assume_init_ref()
-                .translate(VAddr::new(vaddr), VALID)
-                .unwrap()
-        };
+        let ptr: NonNull<u8> = KERNEL_SPACE
+            .get()
+            .translate(VAddr::new(vaddr), VALID)
+            .unwrap();
         ptr.as_ptr() as usize
     }
 }
