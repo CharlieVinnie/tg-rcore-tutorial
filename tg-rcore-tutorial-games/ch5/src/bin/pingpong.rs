@@ -94,7 +94,7 @@ fn player_b_process(state_ptr: *mut GameState, screen_h: i32) {
 // --- MAIN PROCESS ---
 #[unsafe(no_mangle)]
 fn main() -> i32 {
-    let fb_fd = open("/dev/fb0\0", OpenFlags::RDWR);
+    let fb_fd = open("/dev/fb0", OpenFlags::RDWR);
     if fb_fd < 0 { return -1; }
 
     let mut res: (u32, u32) = (0, 0);
@@ -102,7 +102,7 @@ fn main() -> i32 {
     let screen_w = res.0 as i32;
     let screen_h = res.1 as i32;
 
-    let fb_base = mmap(0, (screen_w * screen_h * 4) as usize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, fb_fd as usize, 0);
+    let fb_base = mmap(0, (screen_w * screen_h * 4) as usize, PROT_READ | PROT_WRITE, MAP_PRIVATE, fb_fd as usize, 0);
     if fb_base < 0 { return -1; }
 
     let display = Display { ptr: fb_base as *mut u32, w: screen_w as usize, h: screen_h as usize };
@@ -126,7 +126,7 @@ fn main() -> i32 {
     if fork() == 0 { player_a_process(shm_ptr, screen_h); return 0; }
     if fork() == 0 { player_b_process(shm_ptr, screen_h); return 0; }
 
-    let kb_fd = open("/dev/input0\0", OpenFlags::RDWR);
+    let kb_fd = open("/dev/input0", OpenFlags::RDWR);
     if kb_fd < 0 { return -1; }
 
     let state = unsafe { &mut *shm_ptr };

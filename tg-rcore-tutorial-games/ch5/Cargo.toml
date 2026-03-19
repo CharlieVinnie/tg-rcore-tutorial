@@ -1,7 +1,7 @@
 [package]
 name = "tg-rcore-tutorial-games-ch5-pingpong-user"
 edition = "2024"
-version = "0.1.0-preview.1"
+version = "0.1.0-preview.4"
 authors = [
     "Ziyan Wang <charliewang.cpp@gmail.com>",
 ]
@@ -9,6 +9,7 @@ build = "build.rs"
 description = "User-space game for tg-rcore-tutorial ch5"
 repository = "https://github.com/CharlieVinnie/tg-rcore-tutorial"
 homepage = "https://github.com/CharlieVinnie/tg-rcore-tutorial/tree/game"
+changelog = "https://github.com/CharlieVinnie/tg-rcore-tutorial/tree/game/tg-rcore-tutorial-games/ch5/CHANGELOG.md"
 keywords = [
     "ai",
     "ai4ose",
@@ -69,7 +70,7 @@ path = "src/lib.rs"
 
 [dependencies]
 tg-console = { package = "tg-rcore-tutorial-console", version = "0.4.2-preview.7" }
-tg-syscall = { package = "tg-rcore-tutorial-games-syscall", version = "0.1.0-preview.1", features = ["user"] }
+tg-syscall = { package = "tg-rcore-tutorial-games-syscall", version = "0.1.0-preview.3", features = ["user"] }
 customizable-buddy = "0.0.2"
 
 [profile.dev]

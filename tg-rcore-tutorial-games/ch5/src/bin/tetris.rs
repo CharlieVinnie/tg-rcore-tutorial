@@ -190,7 +190,7 @@ fn try_rotate(board: &[[u8; BOARD_W]; BOARD_H], t: u8, rot: &mut u8, cx: &mut i3
 
 #[unsafe(no_mangle)]
 fn main() -> i32 {
-    let fb_fd = open("/dev/fb0\0", OpenFlags::RDWR);
+    let fb_fd = open("/dev/fb0", OpenFlags::RDWR);
     if fb_fd < 0 { return -1; }
 
     let mut res: (u32, u32) = (0, 0);
@@ -198,7 +198,7 @@ fn main() -> i32 {
     let screen_w = res.0 as usize;
     let screen_h = res.1 as usize;
 
-    let fb_base = mmap(0, screen_w * screen_h * 4, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, fb_fd as usize, 0);
+    let fb_base = mmap(0, screen_w * screen_h * 4, PROT_READ | PROT_WRITE, MAP_PRIVATE, fb_fd as usize, 0);
     if fb_base == 0 { return -1; }
 
     let play_w = BOARD_W * CELL_SIZE;
@@ -213,7 +213,7 @@ fn main() -> i32 {
         h: screen_h,
     };
 
-    let kb_fd = open("/dev/input0\0", OpenFlags::RDWR);
+    let kb_fd = open("/dev/input0", OpenFlags::RDWR);
     if kb_fd < 0 { return -1; }
 
     // Game State

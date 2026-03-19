@@ -16,7 +16,7 @@ pub struct InputEvent {
 
 #[unsafe(no_mangle)]
 fn main() -> i32 {
-    let kb = open("/dev/input0\0", OpenFlags::RDWR);
+    let kb = open("/dev/input0", OpenFlags::RDWR);
 
     println!("Press Esc to exit >w<");
 

@@ -11,7 +11,7 @@ const FB_GET_RESOLUTION: usize = 2;
 
 #[unsafe(no_mangle)]
 fn main() -> i32 {
-    let fd = open("/dev/fb0\0", OpenFlags::RDWR);
+    let fd = open("/dev/fb0", OpenFlags::RDWR);
     if fd < 0 { return -1; }
 
     let mut resolution: (u32, u32) = (0, 0);
@@ -19,7 +19,7 @@ fn main() -> i32 {
     println!("resolution: {} * {}", resolution.0, resolution.1);
 
     // Memory map the framebuffer dynamically based on the fetched resolution
-    let fb = mmap(0, (resolution.0 * resolution.1 * 4) as _, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, fd as _, 0);
+    let fb = mmap(0, (resolution.0 * resolution.1 * 4) as _, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd as _, 0);
 
     if fb < 0 { return -1; }
     
