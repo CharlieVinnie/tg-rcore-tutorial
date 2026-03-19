@@ -1,7 +1,7 @@
 [package]
-name = "tg-rcore-tutorial-easy-fs"
+name = "tg-rcore-tutorial-ch6-charlie-exercise-easy-fs"
 description = "A simple filesystem implementation for rCore tutorial OS."
-version = "0.4.5"
+version = "0.1.0-preview.1"
 edition = "2024"
 authors = ["Yifan Wu <shinbokuow@163.com>"]
 repository = "https://github.com/rcore-os/tg-rcore-tutorial-easy-fs"
