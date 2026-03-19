@@ -1,7 +1,7 @@
 [package]
 name = "tg-rcore-tutorial-driver"
 edition = "2024"
-version = "0.1.0-preview.1"
+version = "0.1.0-preview.2"
 authors = [
     "Ziyan Wang <charliewang.cpp@gmail.com>",
 ]

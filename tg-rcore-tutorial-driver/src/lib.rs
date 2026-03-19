@@ -17,6 +17,6 @@ pub use address::*;
 
 pub use gpu::{GpuDevice, VirtIOGpuWrapper};
 
-pub use input::{InputEvent};
+pub use input::{InputDevice, InputEvent};
 
 pub use virtio_drivers::Hal;
