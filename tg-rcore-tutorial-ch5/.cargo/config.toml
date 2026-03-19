@@ -19,10 +19,10 @@ runner = [
 
 [env]
 TG_GAME_CRATE    = "tg-rcore-tutorial-games-ch5-pingpong-user"
-TG_GAME_LOCAL_DIR = "tg-rcore-tutorial-games/ch5"
+TG_GAME_LOCAL_DIR = "tg-rcore-tutorial-games/ch0"
 TG_GAME_CACHE = "ch5-pingpong"
 TG_GAME_BIN = "user-shell,ch5-tetris,ch5-tangram,ch5-snake,ch5-keyshow,ch5-hello,ch5-forktest,ch5-pingpong,ch5-font"
-TG_GAME_VERSION  = "0.1.0-preview.1"
+TG_GAME_VERSION  = "0.1.0-preview.4"
 TG_GAME_APPS = "user-shell,ch5-tetris,ch5-tangram,ch5-snake,ch5-keyshow,ch5-hello,ch5-forktest,ch5-pingpong,ch5-font"
 TG_GAME_BASE = "0x0"
 TG_GAME_STEP = "0x0"

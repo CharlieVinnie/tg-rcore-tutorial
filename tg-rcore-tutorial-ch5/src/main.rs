@@ -41,11 +41,11 @@
 
 mod device_manager;
 mod kernel_space;
-mod user_reader;
 /// 进程模块：定义 Process 结构体及其方法（from_elf、fork、exec 等）
 mod process;
 /// 处理器模块：定义 PROCESSOR 全局变量和进程管理器 ProcManager
 mod processor;
+mod user_reader;
 
 #[macro_use]
 extern crate tg_console;
@@ -353,7 +353,7 @@ fn map_portal(space: &AddressSpace<Sv39, Sv39Manager>) {
 mod impls {
     use core::ptr::NonNull;
 
-    use crate::{APPS, Sv39, build_flags, device_manager::DEVICES, kernel_space::Sv39Manager, process, processor::{PROCESSOR, ProcManager}, user_reader::read_zero_ended_list};
+    use crate::{APPS, Sv39, build_flags, device_manager::DEVICES, kernel_space::Sv39Manager, process, processor::{PROCESSOR, ProcManager}, user_reader::read_list};
     use tg_console::log;
     use tg_driver::InputEvent;
     use tg_kernel_vm::{
@@ -469,8 +469,8 @@ mod impls {
             }
         }
 
-        fn open(&self, _caller: tg_syscall::Caller, path: usize, _flags: usize) -> isize {
-            let Ok(path_slice) = read_zero_ended_list(current_address_space(), path)
+        fn open(&self, _caller: tg_syscall::Caller, path: usize, count: usize, _flags: usize) -> isize {
+            let Ok(path_slice) = read_list(current_address_space(), path, count)
             else {
                 log::error!("path not readable");
                 return -1;
@@ -730,9 +730,6 @@ mod impls {
                 return -1;
             }
 
-            if (flags & MAP_ANONYMOUS) != MAP_ANONYMOUS {
-                return -1;
-            }
             let visibility = match flags & (MAP_PRIVATE | MAP_SHARED) {
                 MAP_PRIVATE => MapVisibility::PRIVATE,
                 MAP_SHARED => MapVisibility::SHARED,
@@ -778,7 +775,15 @@ mod impls {
                 return -1;
             }
 
-            if fd == GPU_FD as _ {
+            
+            if (flags & MAP_ANONYMOUS) == MAP_ANONYMOUS {
+                process.address_space.map(start..end, &[], 0, prot_flags, visibility);
+                start.base().val() as _
+            } else {
+                if fd != GPU_FD as _ {
+                    log::error!("fd mapping only supported for GPU");
+                    return -1;
+                }
                 let gpu = DEVICES.get().unwrap().get_gpu().unwrap();
                 // Check that len completely covers gpu framebuffer
                 if len != gpu.resolution().map(|res| res.0 * res.1 * 4).unwrap() as _ {
@@ -793,9 +798,6 @@ mod impls {
                 let fb_ppn = PPN::new(fb_ptr >> Sv39::PAGE_BITS);
                 
                 process.address_space.map_extern(start..end, fb_ppn, prot_flags, visibility);
-                start.base().val() as _
-            } else {
-                process.address_space.map(start..end, &[], 0, prot_flags, visibility);
                 start.base().val() as _
             }
         }
