@@ -37,9 +37,10 @@ bitflags! {
 pub fn open(path: &str, flags: OpenFlags) -> isize {
     // SAFETY: path 是有效的字符串引用
     unsafe {
-        syscall2(
+        syscall3(
             SyscallId::OPENAT,
             path.as_ptr() as usize,
+            path.len() as usize,
             flags.bits as usize,
         )
     }

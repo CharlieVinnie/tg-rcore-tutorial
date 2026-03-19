@@ -4,6 +4,7 @@
 
 + Add `ioctl`.
 + Modify `mmap` to accept all 6 arguments. 
++ Modify `open` to pass the str length too.
 
 # tg-rcore-tutorial-syscall
 
