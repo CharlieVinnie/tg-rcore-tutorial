@@ -1,7 +1,7 @@
 [package]
 name = "tg-rcore-tutorial-games-ch6-breakout-kernel"
 edition = "2024"
-version = "0.1.0-preview.1"
+version = "0.1.1-preview.1"
 authors = ["Ziyan Wang <charliewang.cpp@gmail.com>"]
 description = "Kernel support for game of ch6 of tg-rcore tutorial"
 repository = "https://github.com/CharlieVinnie/tg-rcore-tutorial"
@@ -36,10 +36,10 @@ tg-sbi = { package = "tg-rcore-tutorial-sbi", version = "0.4.5", features = ["no
 tg-linker = { package = "tg-rcore-tutorial-linker", version = "0.4.5" }
 tg-console = { package = "tg-rcore-tutorial-console", version = "0.4.5" }
 tg-kernel-context = { package = "tg-rcore-tutorial-kernel-context", version = "0.4.5", features = ["foreign"] }
-tg-syscall = { package = "tg-rcore-tutorial-games-syscall", version = "0.1.0-preview.3", features = ["kernel"] }
+tg-syscall = { package = "tg-rcore-tutorial-games-syscall", version = "0.1.1-preview.1", features = ["kernel"] }
 tg-kernel-alloc = { package = "tg-rcore-tutorial-kernel-alloc", version = "0.4.5" }
 tg-kernel-vm = { package = "tg-rcore-tutorial-games-kernel-vm", version = "0.1.0-preview.1" }
-tg-driver = { package = "tg-rcore-tutorial-driver", version = "0.1.0-preview.2" }
+tg-driver = { package = "tg-rcore-tutorial-driver", version = "0.1.1-preview.1" }
 tg-task-manage = { package = "tg-rcore-tutorial-task-manage", version = "0.4.5", features = ["proc"] }
 tg-easy-fs = { package = "tg-rcore-tutorial-easy-fs", version = "0.4.5" }
 
