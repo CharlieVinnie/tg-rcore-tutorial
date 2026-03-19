@@ -2,7 +2,7 @@ use alloc::{collections::btree_map::BTreeMap, sync::Arc};
 use tg_console::println;
 use virtio_drivers::{DeviceType, Hal, MmioTransport, Transport, VirtIOHeader};
 
-use crate::{GpuDevice, VirtIOGpuWrapper, buffer::OverflowStrategy, input::{InputDevice, VirtIOInputWrapper}, qemu::{claim_irq, complete_irq, setup_interrupt_for, enable_external_interrupts}, address::*};
+use crate::{GpuDevice, VirtIOGpuWrapper, buffer::OverflowStrategy, input::{InputDevice, VirtIOInputWrapper}, block::{BlockDevice, VirtIOBlockWrapper}, qemu::{claim_irq, complete_irq, setup_interrupt_for, enable_external_interrupts}, address::*};
 
 pub trait Device : Send + Sync {
     fn handle_irq(&self);
@@ -38,6 +38,7 @@ impl Iterator for VirtIOProbingIterator {
 pub struct DeviceManager {
     gpu: Option<Arc<dyn GpuDevice>>,
     keyboard: Option<Arc<dyn InputDevice>>,
+    block: Option<Arc<dyn BlockDevice>>,
     irq_map: BTreeMap<usize, Arc<dyn Device>>,
 }
 
@@ -46,6 +47,7 @@ impl DeviceManager {
         let mut manager = Self {
             gpu: None,
             keyboard: None,
+            block: None,
             irq_map: BTreeMap::new(),
         };
 
@@ -75,6 +77,15 @@ impl DeviceManager {
                         println!("Keyboard device found at slot {slot}");
                     }
                 }
+                DeviceType::Block if manager.block.is_none() => {
+                    if let Ok(block) = VirtIOBlockWrapper::<H>::new(transport) {
+                        let block = Arc::new(block);
+                        manager.block = Some(block.clone());
+                        manager.irq_map.insert(slot, block.clone() as _);
+                        setup_interrupt_for(slot);
+                        println!("Block device found at slot {slot}");
+                    }
+                }
                 _ => {}
             }
         }
@@ -94,6 +105,10 @@ impl DeviceManager {
 
     pub fn get_keyboard(&self) -> Option<Arc<dyn InputDevice>> {
         self.keyboard.clone()
+    }
+
+    pub fn get_block(&self) -> Option<Arc<dyn BlockDevice>> {
+        self.block.clone()
     }
 
     pub fn handle_external_interrupt(&self) {

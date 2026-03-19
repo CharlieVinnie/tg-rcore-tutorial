@@ -11,6 +11,9 @@ mod qemu;
 mod clock;
 mod address;
 
+mod block;
+pub use block::{BlockDevice, VirtIOBlockWrapper};
+
 pub use devices::{DeviceManager};
 
 pub use address::*;
