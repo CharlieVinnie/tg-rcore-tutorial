@@ -18,7 +18,7 @@
 //! - 再看 `fork`：观察地址空间和文件描述符的继承规则；
 //! - 最后看 `change_program_brk`：理解用户堆扩缩时的页映射变化。
 
-use crate::{Sv39, Sv39Manager, build_flags, file::{DiskFile, File}, map_portal, parse_flags};
+use crate::{Sv39, Sv39Manager, build_flags, file::{DiskFile, File}, map_portal, parse_flags, user_allocator::UserAllocator};
 use alloc::{alloc::alloc_zeroed, sync::Arc, vec::Vec};
 use core::alloc::Layout;
 use spin::Mutex;
@@ -55,6 +55,8 @@ pub struct Process {
     pub heap_bottom: usize,
     /// 当前程序 break 位置（堆顶）
     pub program_brk: usize,
+    /// for mmaps
+    pub allocator: UserAllocator,
     /// Stride value for scheduling
     pub stride: usize,
     /// Priority value for scheduling
@@ -103,6 +105,7 @@ impl Process {
             fd_table: new_fd_table,
             heap_bottom: self.heap_bottom,
             program_brk: self.program_brk,
+            allocator: self.allocator.clone(),
             stride: 0,
             priority: self.priority,
         })
@@ -130,12 +133,23 @@ impl Process {
 
         let mut address_space = AddressSpace::new();
         let mut max_end_va: usize = 0;
-        // 遍历 ELF LOAD 段，映射到地址空间
-        for program in elf.program_iter() {
-            if !matches!(program.get_type(), Ok(program::Type::Load)) {
-                continue;
-            }
 
+        let mut load_segments: alloc::vec::Vec<_> = elf
+            .program_iter()
+            .filter(|p| matches!(p.get_type(), Ok(program::Type::Load)))
+            .collect();
+        load_segments.sort_by_key(|p| p.virtual_addr());
+
+        // 用于处理跨段共享页的缓存结构
+        struct PendingPage<F> {
+            vpn: VPN<Sv39>,
+            flags: F,
+            data: alloc::vec::Vec<u8>,
+        }
+        let mut pending_page: Option<PendingPage<_>> = None;
+
+        // 遍历 ELF LOAD 段，解决重叠后映射到地址空间
+        for program in &load_segments {
             let off_file = program.offset() as usize;
             let len_file = program.file_size() as usize;
             let off_mem = program.virtual_addr() as usize;
@@ -147,26 +161,124 @@ impl Process {
             }
 
             let mut flags: [u8; 5] = *b"U___V";
-            if program.flags().is_execute() {
-                flags[1] = b'X';
+            if program.flags().is_execute() { flags[1] = b'X'; }
+            if program.flags().is_write() { flags[2] = b'W'; }
+            if program.flags().is_read() { flags[3] = b'R'; }
+            let seg_flags = parse_flags(unsafe { core::str::from_utf8_unchecked(&flags) }).unwrap();
+
+            let file_data = &elf.input[off_file..off_file + len_file];
+
+            let start_vpn = VAddr::new(off_mem).floor();
+            let end_vpn = VAddr::new(end_mem).ceil();
+
+            let mut current_vpn = start_vpn;
+            let mut current_file_offset = 0;
+
+            // 1. 检查当前段的第一页是否与上一个段的最后一页重叠
+            if let Some(mut p) = pending_page.take() {
+                if p.vpn == current_vpn {
+                    // 发生页重叠！权限取并集
+                    p.flags |= seg_flags; 
+
+                    // 将当前段位于共享页的数据拷贝进去
+                    let page_offset = off_mem & PAGE_MASK;
+                    let copy_len = core::cmp::min(PAGE_SIZE - page_offset, file_data.len());
+                    if copy_len > 0 {
+                        p.data[page_offset..page_offset + copy_len]
+                            .copy_from_slice(&file_data[..copy_len]);
+                    }
+
+                    if end_vpn == current_vpn + 1 {
+                        // 当前段完全结束在这个共享页内，继续挂起
+                        pending_page = Some(p);
+                        continue; 
+                    } else {
+                        // 当前段延伸到了后面的页，重叠页已满，可以安全映射了！
+                        address_space.map(
+                            p.vpn..p.vpn+1,
+                            &p.data,
+                            0,
+                            p.flags,
+                            MapVisibility::PRIVATE,
+                        );
+                        current_vpn += 1;
+                        current_file_offset += copy_len;
+                    }
+                } else {
+                    // 没有重叠，把上一个挂起的页直接映射出去
+                    address_space.map(
+                        p.vpn..p.vpn+1,
+                        &p.data,
+                        0,
+                        p.flags,
+                        MapVisibility::PRIVATE,
+                    );
+                }
             }
-            if program.flags().is_write() {
-                flags[2] = b'W';
+
+            // 安全检查：如果段在重叠处理中已经被完全吃掉，跳过
+            if current_vpn >= end_vpn {
+                continue;
             }
-            if program.flags().is_read() {
-                flags[3] = b'R';
+
+            let last_vpn = VPN::new(end_vpn.val().wrapping_sub(1));
+
+            // 2. 批量映射当前段内部完整的页面 (跳过最后一页)
+            if current_vpn < last_vpn {
+                let bulk_off_mem = core::cmp::max(off_mem, current_vpn.base().val());
+                let bulk_end_mem = core::cmp::min(off_mem + len_file, last_vpn.base().val());
+                let bulk_copy_len = bulk_end_mem.saturating_sub(bulk_off_mem);
+
+                let bulk_data = &file_data[current_file_offset..current_file_offset + bulk_copy_len];
+                let bulk_page_offset = bulk_off_mem - (current_vpn.base().val());
+
+                address_space.map(
+                    current_vpn..last_vpn,
+                    bulk_data,
+                    bulk_page_offset,
+                    seg_flags,
+                    MapVisibility::PRIVATE,
+                );
+
+                current_file_offset += bulk_copy_len;
             }
+
+            // 3. 提取当前段的最后一页，作为新的挂起页 (Pending Page) 记录下来
+            let mut p_data = alloc::vec![0u8; PAGE_SIZE];
+            let last_page_va = last_vpn.base().val();
+            let last_off_mem = core::cmp::max(off_mem, last_page_va);
+            let last_page_offset = last_off_mem - last_page_va;
+
+            let remaining_file_data = file_data.len().saturating_sub(current_file_offset);
+            let copy_len = core::cmp::min(remaining_file_data, PAGE_SIZE - last_page_offset);
+
+            if copy_len > 0 {
+                p_data[last_page_offset..last_page_offset + copy_len]
+                    .copy_from_slice(&file_data[current_file_offset..current_file_offset + copy_len]);
+            }
+
+            pending_page = Some(PendingPage {
+                vpn: last_vpn,
+                flags: seg_flags,
+                data: p_data,
+            });
+        }
+
+        // 4. 所有段遍历结束，刷出最后剩下的挂起页
+        if let Some(p) = pending_page.take() {
             address_space.map(
-                VAddr::new(off_mem).floor()..VAddr::new(end_mem).ceil(),
-                &elf.input[off_file..][..len_file],
-                off_mem & PAGE_MASK,
-                parse_flags(unsafe { core::str::from_utf8_unchecked(&flags) }).unwrap(),
+                p.vpn..p.vpn+1,
+                &p.data,
+                0,
+                p.flags,
                 MapVisibility::PRIVATE,
             );
         }
 
         // 堆底从 ELF 加载的最高地址的下一页开始
         let heap_bottom = VAddr::<Sv39>::new(max_end_va).ceil().base().val();
+
+        println!("heap_bottom: {:#x}", heap_bottom);
 
         // 映射用户栈（2 页 = 8 KiB）
         let stack = unsafe {
@@ -188,6 +300,14 @@ impl Process {
         let mut context = LocalContext::user(entry);
         let satp = (8 << 60) | address_space.root_ppn().val();
         *context.sp_mut() = 1 << 38;
+
+        // area reserved for mmap
+        let mmap_start = VPN::<Sv39>::new((1 << 26) - 2000).base().val();
+        let mmap_end = VPN::<Sv39>::new((1 << 26) - 5).base().val();
+        let allocator = UserAllocator::new(
+            mmap_start..mmap_end
+        );
+
         Some(Self {
             pid: ProcId::new(),
             context: ForeignContext { context, satp },
@@ -200,6 +320,7 @@ impl Process {
             ],
             heap_bottom,
             program_brk: heap_bottom,
+            allocator,
             stride: 0,
             priority: 16,
         })

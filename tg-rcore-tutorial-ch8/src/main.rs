@@ -38,6 +38,7 @@
 
 mod device;
 mod file;
+mod user_allocator;
 /// 文件系统模块：easy-fs 文件系统管理器
 mod fs;
 mod memory;
@@ -218,7 +219,13 @@ extern "C" fn rust_main() -> ! {
                 }
                 // ─── 其他异常/中断：杀死进程 ───
                 e => {
-                    log::error!("unsupported trap: {e:?}");
+                    let ctx = &task.context.context;
+                    log::error!(
+                        "unsupported trap: {e:?}, sepc={:#x}, stval={:#x}, ra={:#x}",
+                        sepc::read(),
+                        stval::read(),
+                        ctx.ra()
+                    );
                     unsafe { (*processor).make_current_exited(-3) };
                 }
             }
@@ -454,6 +461,21 @@ mod impls {
                 -1
             }
         }
+
+        fn lseek(&self, _caller: tg_syscall::Caller, fd: usize, offset: isize, whence: usize) -> isize {
+            let current = PROCESSOR.get_mut().current().unwrap();
+            if fd >= current.fd_table.len() {
+                return -1;
+            }
+
+            if let Some(file) = &current.fd_table[fd] {
+                let file = file.lock();
+                file.lseek(offset, whence)
+            } else {
+                log::error!("unsupported fd: {fd}");
+                -1
+            }
+        }
     }
 
     /// 进程管理系统调用实现
@@ -538,6 +560,7 @@ mod impls {
         }
 
         fn sbrk(&self, _caller: Caller, size: i32) -> isize {
+            println!("sbrk called: {:#x}", size);
             let current = PROCESSOR.get_mut().current().unwrap();
             if let Some(old_brk) = current.change_program_brk(size as isize) {
                 old_brk as isize
@@ -569,7 +592,7 @@ mod impls {
         #[inline]
         fn clock_gettime(&self, _caller: Caller, clock_id: ClockId, tp: usize) -> isize {
             match clock_id {
-                ClockId::CLOCK_MONOTONIC => {
+                ClockId::CLOCK_MONOTONIC | ClockId::CLOCK_REALTIME => {
                     if let Some(mut ptr) = translate_current::<TimeSpec>(tp, WRITABLE) {
                         let time = riscv::register::time::read() * 10000 / 125;
                         *unsafe { ptr.as_mut() } = TimeSpec {
@@ -613,6 +636,8 @@ mod impls {
                 return -1;
             }
 
+            println!("Hello from mmap");
+
             let visibility = match flags & (MAP_PRIVATE | MAP_SHARED) {
                 MAP_PRIVATE => MapVisibility::PRIVATE,
                 MAP_SHARED => MapVisibility::SHARED,
@@ -640,10 +665,11 @@ mod impls {
                 start = VAddr::<Sv39>::new(addr).floor();
                 end = VAddr::<Sv39>::new(addr + len).ceil();
             } else {
-                let brk = process.program_brk;
-                start = VAddr::<Sv39>::new(brk).floor();
-                end = VAddr::<Sv39>::new(brk + len).ceil();
-                process.program_brk = end.base().val();
+                let Some(alloc_start) = process.allocator.alloc_aligned(len) else {
+                    return -1;
+                };
+                start = VAddr::<Sv39>::new(alloc_start).floor();
+                end = VAddr::<Sv39>::new(alloc_start + len).ceil();
             }
             
             // 检查冲突
@@ -655,8 +681,11 @@ mod impls {
                 }
             }
             if conflict {
+                println!("conflict!");
                 return -1;
             }
+
+            println!("heeeheee");
 
             if (flags & MAP_ANONYMOUS) == MAP_ANONYMOUS {
                 process.address_space.map(start..end, &[], 0, prot_flags, visibility);

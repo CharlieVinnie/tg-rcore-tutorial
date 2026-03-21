@@ -13,6 +13,9 @@ pub trait File {
         tg_console::log::error!("ioctl not supported for this file type");
         -1
     }
+    fn lseek(&self, _offset: isize, _whence: usize) -> isize {
+        -1
+    }
 }
 
 // Files that reside on the disk
@@ -61,6 +64,25 @@ impl File for DiskFile {
     }
     fn mmap(&self, _mapper: &mut dyn VmMapper) -> Result<(), ()> {
         unimplemented!("mmap not implemented for DiskFile")
+    }
+    fn lseek(&self, offset: isize, whence: usize) -> isize {
+        const SEEK_SET: usize = 0;
+        const SEEK_CUR: usize = 1;
+        // SEEK_END not yet supported (would need file size from inode)
+        let new_offset = match whence {
+            SEEK_SET => offset as usize,
+            SEEK_CUR => {
+                let cur = self.file_handle.offset.get();
+                if offset < 0 {
+                    cur.wrapping_add(offset as usize)
+                } else {
+                    cur + offset as usize
+                }
+            }
+            _ => return -1,
+        };
+        self.file_handle.offset.set(new_offset);
+        new_offset as isize
     }
 }
 
