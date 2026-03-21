@@ -1,35 +1,33 @@
-# 交叉编译目标：RISC-V 64 位裸机
+# 默认编译目标：RISC-V 64 位裸机平台
+# 使 cargo build 自动进行交叉编译，无需每次指定 --target
 [build]
 target = "riscv64gc-unknown-none-elf"
 
-# QEMU 运行配置
-# 使用 qemu-system-riscv64 运行编译产物
-# -machine virt        ：QEMU virt 虚拟机平台
-# -nographic           ：无图形界面，输出到终端
-# -bios none           ：不使用 BIOS（内核直接启动）
-# -drive ...           ：挂载 easy-fs 磁盘镜像（包含用户程序）
-# -device ...          ：VirtIO 块设备
-# -kernel              ：内核 ELF 文件
+# QEMU 运行器配置
+# cargo run 时自动调用此命令执行编译产物
 [target.riscv64gc-unknown-none-elf]
 runner = [
     "qemu-system-riscv64",
-    "-machine",
-    "virt",
-    "-nographic",
-    "-bios",
-    "none",
-    "-drive",
-    "file=target/riscv64gc-unknown-none-elf/debug/fs.img,if=none,format=raw,id=x0",
-    "-device",
-    "virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0",
-    "-kernel",
+    "-machine", "virt",       # 使用 QEMU virt 虚拟平台
+    "-drive", "file=target/riscv64gc-unknown-none-elf/debug/fs.img,if=none,format=raw,id=x0",
+    "-device", "virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0",
+    "-device", "virtio-gpu-device,xres=800,yres=600", # 启用 VirtIO GPU
+    "-device", "virtio-keyboard-device",
+    "-display", "sdl",
+    "-d", "in_asm",
+    "-D", "qemu.log",
+    "-serial", "stdio",       # 保证控制台继续输出到终端
+    "-bios", "none",          # 不加载外部 BIOS/SBI 固件（tg-sbi 内建）
+    "-kernel",                # 后接 ELF 可执行文件路径（由 cargo 自动填充）
 ]
 
-# tg-user 用户态库的配置，由 build.rs 读取
-# TG_USER_CRATE   : cargo clone 时使用的 crates.io 包名
-# TG_USER_LOCAL_DIR: 本地缓存目录名（位于 chN/ 下）
-# TG_USER_VERSION : 目标版本号
 [env]
-TG_USER_CRATE     = "tg-rcore-tutorial-user"
-TG_USER_LOCAL_DIR = "tg-rcore-tutorial-user"
-TG_USER_VERSION   = "0.4.5"
+# Initial process to run
+INITPROC = "doomgeneric"
+
+# Doomgeneric source directory (relative to CARGO_MANIFEST_DIR)
+TG_DOOMGENERIC_DIR = "user/doomgeneric/doomgeneric"
+
+# Files to pack into fs.img, semicolon-separated.
+# Format: "name_in_fs=host_path" (path relative to CARGO_MANIFEST_DIR)
+TG_FS_RESOURCES = "doomgeneric=user/doomgeneric/doomgeneric/doomgeneric;doom1.wad=resources/doom1.wad"

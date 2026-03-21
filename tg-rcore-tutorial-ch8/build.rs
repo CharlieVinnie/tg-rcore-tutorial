@@ -1,142 +1,102 @@
-use serde::Deserialize;
-use std::{collections::HashMap, env, fs, path::PathBuf, process::Command};
+use std::{env, fs, path::PathBuf, process::Command};
 use tg_easy_fs::{BlockDevice, EasyFileSystem};
 
-const TARGET_ARCH: &str = "riscv64gc-unknown-none-elf";
 const BLOCK_SZ: usize = 512;
-
-#[derive(Deserialize, Default)]
-struct Cases {
-    base: Option<u64>,
-    step: Option<u64>,
-    cases: Option<Vec<String>>,
-}
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-env-changed=LOG");
-    println!("cargo:rerun-if-env-changed=TG_USER_DIR");
-    println!("cargo:rerun-if-env-changed=TG_USER_VERSION");
-    println!("cargo:rerun-if-env-changed=TG_USER_CRATE");
-    println!("cargo:rerun-if-env-changed=TG_USER_LOCAL_DIR");
     println!("cargo:rerun-if-env-changed=TG_SKIP_USER_APPS");
-    println!("cargo:rerun-if-env-changed=CARGO_FEATURE_EXERCISE");
+    println!("cargo:rerun-if-env-changed=TG_DOOMGENERIC_DIR");
+    println!("cargo:rerun-if-env-changed=TG_FS_RESOURCES");
 
-    let target_arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
+    let target_arch: String = env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
 
-    // 只在 RISC-V64 架构上使用链接脚本
     if target_arch == "riscv64" {
         write_linker();
-        if should_skip_build_apps() {
+        if env::var_os("TG_SKIP_USER_APPS").is_some() {
             return;
         }
-        build_apps_and_pack_fs();
+        build_and_pack();
     }
-}
-
-fn should_skip_build_apps() -> bool {
-    if env::var_os("TG_SKIP_USER_APPS").is_some() {
-        return true;
-    }
-
-    is_packaged_build()
 }
 
 fn write_linker() {
-    let ld = PathBuf::from(env::var_os("OUT_DIR").unwrap()).join("linker.ld");
+    let ld: PathBuf = PathBuf::from(env::var_os("OUT_DIR").unwrap()).join("linker.ld");
     fs::write(&ld, tg_linker::NOBIOS_SCRIPT).unwrap_or_else(|err| {
         panic!("failed to write linker script to {}: {}", ld.display(), err)
     });
     println!("cargo:rustc-link-arg=-T{}", ld.display());
 }
 
-fn is_packaged_build() -> bool {
-    let out_dir = PathBuf::from(env::var_os("OUT_DIR").unwrap());
-    let out_dir = out_dir.to_string_lossy();
-
-    let manifest_dir = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
-    let manifest_dir = manifest_dir.to_string_lossy();
-
-    out_dir.contains("/target/package/")
-        || out_dir.contains("\\target\\package\\")
-        || manifest_dir.contains("/target/package/")
-        || manifest_dir.contains("\\target\\package\\")
+/// Parse "name=relative/path" entries from TG_FS_RESOURCES (semicolon-separated).
+/// Returns Vec<(fs_name, host_absolute_path)>.
+fn parse_resources(manifest_dir: &PathBuf) -> Vec<(String, PathBuf)> {
+    let raw: String = env::var("TG_FS_RESOURCES").unwrap_or_default();
+    raw.split(';')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .map(|entry| {
+            let (name, rel_path) = entry.split_once('=').unwrap_or_else(|| {
+                panic!(
+                    "TG_FS_RESOURCES entry '{}' must be in 'name=path' format",
+                    entry
+                )
+            });
+            let abs_path: PathBuf = manifest_dir.join(rel_path);
+            if !abs_path.exists() {
+                panic!(
+                    "TG_FS_RESOURCES: '{}' resolved to '{}' which does not exist",
+                    entry,
+                    abs_path.display()
+                );
+            }
+            println!("cargo:rerun-if-changed={}", abs_path.display());
+            (name.to_string(), abs_path)
+        })
+        .collect()
 }
 
-fn build_apps_and_pack_fs() {
-    let tg_user_root = ensure_tg_user();
-    let cases_path = tg_user_root.join("cases.toml");
-    println!("cargo:rerun-if-changed={}", cases_path.display());
-    println!(
-        "cargo:rerun-if-changed={}",
-        tg_user_root.join("Cargo.toml").display()
-    );
-    println!("cargo:rerun-if-changed={}", tg_user_root.join("src").display());
+fn build_and_pack() {
+    let manifest_dir: PathBuf = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
 
-    let cfg = fs::read_to_string(&cases_path).unwrap_or_else(|err| {
-        panic!("failed to read cases.toml from {}: {}", cases_path.display(), err)
-    });
-    let mut cases_map: HashMap<String, Cases> = toml::from_str(&cfg).unwrap_or_else(|err| {
-        panic!("failed to parse cases.toml: {err}")
-    });
+    // --- Build doomgeneric via make ---
+    if let Ok(doomgeneric_rel) = env::var("TG_DOOMGENERIC_DIR") {
+        let doomgeneric_src: PathBuf = manifest_dir.join(&doomgeneric_rel);
+        println!("cargo:rerun-if-changed={}", doomgeneric_src.display());
+        // Also track the rcore stubs directory (sibling of doomgeneric source)
+        let rcore_dir: PathBuf = doomgeneric_src.parent().unwrap().join("rcore");
+        if rcore_dir.exists() {
+            println!("cargo:rerun-if-changed={}", rcore_dir.display());
+        }
 
-    let case_key = if env::var("CARGO_FEATURE_EXERCISE").is_ok() {
-        "ch8_exercise"
-    } else {
-        "ch8"
-    };
-    let cases = cases_map.remove(case_key).unwrap_or_default();
-    let base = cases.base.unwrap_or(0);
-    let step = cases.step.unwrap_or(0);
-    let names = cases.cases.unwrap_or_default();
+        let status: std::process::ExitStatus = Command::new("make")
+            .args(["clean", "all"])
+            .current_dir(&doomgeneric_src)
+            .status()
+            .expect("failed to execute make for doomgeneric");
 
-    if names.is_empty() {
-        panic!("no user cases found for {case_key} in {}", cases_path.display());
+        if !status.success() {
+            panic!("failed to build doomgeneric");
+        }
     }
 
-    let manifest_dir = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
-    let fs_target_dir = manifest_dir
-        .join("target")
-        .join(TARGET_ARCH)
-        .join("debug");
-    let app_target_dir = tg_user_root
-        .join("target")
-        .join(TARGET_ARCH)
-        .join("debug");
-
-    for (i, name) in names.iter().enumerate() {
-        let base_address = base + i as u64 * step;
-        build_user_app(&tg_user_root, name, base_address);
+    // --- Collect files entirely from TG_FS_RESOURCES ---
+    let files: Vec<(String, PathBuf)> = parse_resources(&manifest_dir);
+    if files.is_empty() {
+        panic!("TG_FS_RESOURCES is empty or not set; nothing to pack into fs.img");
     }
 
-    easy_fs_pack(&names, &app_target_dir, &fs_target_dir).unwrap_or_else(|err| {
+    // --- Pack into fs.img ---
+    let fs_target_dir: PathBuf = manifest_dir.join("target/riscv64gc-unknown-none-elf/debug");
+    let files_ref: Vec<(&str, &PathBuf)> = files.iter().map(|(n, p)| (n.as_str(), p)).collect();
+
+    easy_fs_pack(&files_ref, &fs_target_dir).unwrap_or_else(|err| {
         panic!(
             "failed to pack easy-fs image in {}: {err}",
             fs_target_dir.display()
         )
     });
-}
-
-fn build_user_app(tg_user_root: &PathBuf, name: &str, base_address: u64) {
-    let mut cmd = Command::new("cargo");
-    cmd.args([
-        "build",
-        "--manifest-path",
-        tg_user_root.join("Cargo.toml").to_string_lossy().as_ref(),
-        "--bin",
-        name,
-        "--target",
-        TARGET_ARCH,
-    ]);
-
-    if base_address != 0 {
-        cmd.env("BASE_ADDRESS", base_address.to_string());
-    }
-
-    let status = cmd.status().expect("failed to execute cargo build for user app");
-    if !status.success() {
-        panic!("failed to build user app {name}");
-    }
 }
 
 struct BlockFile(std::sync::Mutex<std::fs::File>);
@@ -160,8 +120,7 @@ impl BlockDevice for BlockFile {
 }
 
 fn easy_fs_pack(
-    cases: &[String],
-    app_target: &PathBuf,
+    files: &[(&str, &PathBuf)],
     fs_target: &PathBuf,
 ) -> std::io::Result<()> {
     use std::fs::OpenOptions;
@@ -169,99 +128,37 @@ fn easy_fs_pack(
     use std::sync::Arc;
 
     fs::create_dir_all(fs_target)?;
-    let fs_file = fs_target.join("fs.img");
+    let fs_file: PathBuf = fs_target.join("fs.img");
     println!("cargo:rerun-if-changed={}", fs_file.display());
+
+    // Calculate required size: doom1.wad is ~4MB, so use enough blocks
+    // 64 * 2048 blocks * 512 = 64 MiB — should be plenty
+    let total_blocks: u32 = 64 * 2048;
+
     let block_file = Arc::new(BlockFile(std::sync::Mutex::new({
         let f = OpenOptions::new()
             .read(true)
             .write(true)
             .create(true)
-            .open(fs_file)?;
-        f.set_len(64 * 2048 * BLOCK_SZ as u64).unwrap();
+            .truncate(true)
+            .open(&fs_file)?;
+        f.set_len(total_blocks as u64 * BLOCK_SZ as u64).unwrap();
         f
     })));
 
-    let efs = EasyFileSystem::create(block_file, 64 * 2048, 1);
+    let efs = EasyFileSystem::create(block_file, total_blocks, 1);
     let root_inode = Arc::new(EasyFileSystem::root_inode(&efs));
 
-    for case in cases {
-        let mut host_file = std::fs::File::open(app_target.join(case)).unwrap();
+    for (name, path) in files {
+        eprintln!("  packing: {} <- {}", name, path.display());
+        let mut host_file = std::fs::File::open(path).unwrap_or_else(|e| {
+            panic!("failed to open {}: {e}", path.display())
+        });
         let mut all_data: Vec<u8> = Vec::new();
         host_file.read_to_end(&mut all_data).unwrap();
-        let inode = root_inode.create(case.as_str()).unwrap();
+        let inode = root_inode.create(name).unwrap();
         inode.write_at(0, all_data.as_slice());
     }
 
     Ok(())
-}
-
-fn ensure_tg_user() -> PathBuf {
-    // 优先使用 TG_USER_DIR 显式指定的目录
-    if let Ok(dir) = env::var("TG_USER_DIR") {
-        let path = PathBuf::from(dir);
-        if path.join("Cargo.toml").exists() {
-            return path;
-        }
-    }
-
-    // 从 .cargo/config.toml [env] 读取三个配置项
-    let crate_name = env::var("TG_USER_CRATE")
-        .expect("TG_USER_CRATE not set; add it to .cargo/config.toml [env]");
-    let local_dir_name = env::var("TG_USER_LOCAL_DIR")
-        .expect("TG_USER_LOCAL_DIR not set; add it to .cargo/config.toml [env]");
-    let version = env::var("TG_USER_VERSION")
-        .expect("TG_USER_VERSION not set; add it to .cargo/config.toml [env]");
-
-    let manifest_dir = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
-    let tg_user_dir = manifest_dir.join(&local_dir_name);
-
-    // 本地缓存目录已存在则直接使用
-    if tg_user_dir.join("Cargo.toml").exists() {
-        ensure_workspace_table(&tg_user_dir);
-        return tg_user_dir;
-    }
-
-    // 从 crates.io 克隆指定包
-    let crate_spec = format!("{crate_name}@{version}");
-    let status = Command::new("cargo")
-        .args([
-            "clone",
-            crate_spec.as_str(),
-            "--",
-            tg_user_dir.to_string_lossy().as_ref(),
-        ])
-        .status()
-        .unwrap_or_else(|e| panic!("failed to execute cargo clone {crate_spec}: {e}"));
-
-    if !status.success() {
-        panic!(
-            "failed to clone {crate_spec} into {}; ensure cargo-clone is installed or set TG_USER_DIR",
-            tg_user_dir.display()
-        );
-    }
-
-    if !tg_user_dir.join("Cargo.toml").exists() {
-        panic!(
-            "{crate_spec} clone did not produce a valid crate at {}",
-            tg_user_dir.display()
-        );
-    }
-
-    // 克隆后补加 [workspace]，防止父 workspace 将其识别为非成员而报错
-    ensure_workspace_table(&tg_user_dir);
-
-    tg_user_dir
-}
-
-/// 若 Cargo.toml 末尾尚无 [workspace] 表，则追加一个空的，
-/// 使该 crate 成为独立 workspace 根，避免父 workspace 冲突。
-fn ensure_workspace_table(dir: &PathBuf) {
-    let cargo_toml = dir.join("Cargo.toml");
-    let content = fs::read_to_string(&cargo_toml).unwrap_or_default();
-    if !content.contains("[workspace]") {
-        fs::write(&cargo_toml, format!("{}
-[workspace]
-", content))
-            .unwrap_or_else(|err| panic!("failed to patch Cargo.toml in {}: {}", dir.display(), err));
-    }
 }
