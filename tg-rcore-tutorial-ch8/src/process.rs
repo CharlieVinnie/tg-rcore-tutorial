@@ -278,8 +278,6 @@ impl Process {
         // 堆底从 ELF 加载的最高地址的下一页开始
         let heap_bottom = VAddr::<Sv39>::new(max_end_va).ceil().base().val();
 
-        println!("heap_bottom: {:#x}", heap_bottom);
-
         // 映射用户栈（2 页 = 8 KiB）
         let stack = unsafe {
             alloc_zeroed(Layout::from_size_align_unchecked(

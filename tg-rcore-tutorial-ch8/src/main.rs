@@ -560,7 +560,6 @@ mod impls {
         }
 
         fn sbrk(&self, _caller: Caller, size: i32) -> isize {
-            println!("sbrk called: {:#x}", size);
             let current = PROCESSOR.get_mut().current().unwrap();
             if let Some(old_brk) = current.change_program_brk(size as isize) {
                 old_brk as isize
@@ -636,8 +635,6 @@ mod impls {
                 return -1;
             }
 
-            println!("Hello from mmap");
-
             let visibility = match flags & (MAP_PRIVATE | MAP_SHARED) {
                 MAP_PRIVATE => MapVisibility::PRIVATE,
                 MAP_SHARED => MapVisibility::SHARED,
@@ -681,11 +678,8 @@ mod impls {
                 }
             }
             if conflict {
-                println!("conflict!");
                 return -1;
             }
-
-            println!("heeeheee");
 
             if (flags & MAP_ANONYMOUS) == MAP_ANONYMOUS {
                 process.address_space.map(start..end, &[], 0, prot_flags, visibility);

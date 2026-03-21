@@ -154,11 +154,9 @@ static void addKeyToQueue(int pressed, unsigned char key)
 void DG_Init()
 {
     memset(s_KeyQueue, 0, sizeof(s_KeyQueue));
-    printf("[DG_Init] start\n");
 
     // Open framebuffer
     fb_fd = rcore_open("/dev/fb0", RCORE_O_RDWR);
-    printf("[DG_Init] fb_fd = %d\n", fb_fd);
     if (fb_fd < 0) return;
 
     // Get resolution
@@ -166,7 +164,6 @@ void DG_Init()
     rcore_ioctl(fb_fd, RCORE_FB_GET_RESOLUTION, (unsigned long)res);
     screen_w = res[0];
     screen_h = res[1];
-    printf("[DG_Init] screen: %ux%u\n", screen_w, screen_h);
 
     // Map framebuffer into memory
     long fb_base = rcore_mmap(0,
@@ -174,23 +171,17 @@ void DG_Init()
                               RCORE_PROT_READ | RCORE_PROT_WRITE,
                               RCORE_MAP_PRIVATE,
                               fb_fd, 0);
-    printf("[DG_Init] fb_base = 0x%lx\n", fb_base);
     if (fb_base <= 0) return;
     fb_ptr = (uint32_t *)fb_base;
 
     // Open keyboard
     kb_fd = rcore_open("/dev/input0", RCORE_O_RDWR);
-    printf("[DG_Init] kb_fd = %d, fb_ptr = %p\n", kb_fd, (void*)fb_ptr);
 }
 
 static int frame_count = 0;
 void DG_DrawFrame()
 {
     frame_count++;
-    if (frame_count <= 3) {
-        printf("[DG_DrawFrame] frame=%d fb_ptr=%p screen=%ux%u\n",
-               frame_count, (void*)fb_ptr, screen_w, screen_h);
-    }
     // Blit DG_ScreenBuffer to framebuffer.
     // Doom renders at DOOMGENERIC_RESX x DOOMGENERIC_RESY (640x400).
     // If screen size matches, direct copy. Otherwise, center or crop.
@@ -212,8 +203,6 @@ void DG_DrawFrame()
 
         // Flush framebuffer
         rcore_ioctl(fb_fd, RCORE_FB_FLUSH, 0);
-    } else if (frame_count <= 3) {
-        printf("[DG_DrawFrame] fb_ptr is NULL, skipping\n");
     }
 
     // Poll keyboard input
