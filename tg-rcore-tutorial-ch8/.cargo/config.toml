@@ -30,4 +30,4 @@ TG_DOOMGENERIC_DIR = "user/doomgeneric/doomgeneric"
 
 # Files to pack into fs.img, semicolon-separated.
 # Format: "name_in_fs=host_path" (path relative to CARGO_MANIFEST_DIR)
-TG_FS_RESOURCES = "doomgeneric=user/doomgeneric/doomgeneric/doomgeneric;doom1.wad=resources/doom1.wad"
+TG_FS_RESOURCES = "doomgeneric=@OUT_DIR@/doomgeneric;doom1.wad=resources/doom1.wad"

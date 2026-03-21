@@ -43,7 +43,11 @@ fn parse_resources(manifest_dir: &PathBuf) -> Vec<(String, PathBuf)> {
                     entry
                 )
             });
-            let abs_path: PathBuf = manifest_dir.join(rel_path);
+            let abs_path: PathBuf = if rel_path.starts_with("@OUT_DIR@/") {
+                PathBuf::from(env::var("OUT_DIR").unwrap()).join(&rel_path[10..])
+            } else {
+                manifest_dir.join(rel_path)
+            };
             if !abs_path.exists() {
                 panic!(
                     "TG_FS_RESOURCES: '{}' resolved to '{}' which does not exist",
@@ -70,8 +74,17 @@ fn build_and_pack() {
             println!("cargo:rerun-if-changed={}", rcore_dir.display());
         }
 
+        let out_dir = env::var("OUT_DIR").unwrap();
+        let doomgeneric_out = PathBuf::from(&out_dir).join("doomgeneric");
+        let doomgeneric_obj = PathBuf::from(&out_dir).join("doomgeneric_obj");
+
         let status: std::process::ExitStatus = Command::new("make")
-            .args(["clean", "all"])
+            .args([
+                "clean",
+                "all",
+                &format!("OBJDIR={}", doomgeneric_obj.display()),
+                &format!("OUTPUT={}", doomgeneric_out.display()),
+            ])
             .current_dir(&doomgeneric_src)
             .status()
             .expect("failed to execute make for doomgeneric");
