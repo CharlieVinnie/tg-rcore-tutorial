@@ -74,6 +74,9 @@ pub trait IO: Sync {
     fn ioctl(&self, caller: Caller, fd: usize, request: usize, argp: usize) -> isize {
         unimplemented!()
     }
+    fn lseek(&self, caller: Caller, fd: usize, offset: isize, whence: usize) -> isize {
+        unimplemented!()
+    }
 }
 
 pub trait Memory: Sync {
@@ -263,6 +266,7 @@ pub fn handle(caller: Caller, id: SyscallId, args: [usize; 6]) -> SyscallResult 
         }),
         Id::FSTAT => IO.call(id, |io| io.fstat(caller, args[0], args[1])),
         Id::IOCTL => IO.call(id, |io| io.ioctl(caller, args[0], args[1], args[2])),
+        Id::LSEEK => IO.call(id, |io| io.lseek(caller, args[0], args[1] as isize, args[2])),
         Id::EXIT => PROCESS.call(id, |proc| proc.exit(caller, args[0])),
         Id::CLONE => PROCESS.call(id, |proc| proc.fork(caller)),
         Id::EXECVE => PROCESS.call(id, |proc| proc.exec(caller, args[0], args[1])),
