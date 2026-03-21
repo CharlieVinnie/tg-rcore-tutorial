@@ -1,46 +1,63 @@
 //! 文件系统管理模块
 //!
-//! 本模块与第七章相同，提供：
-//! - `FS`：全局文件系统实例（easy-fs 根 Inode）
-//! - `Fd`：统一文件描述符枚举（File / PipeRead / PipeWrite / Empty）
-//! - `read_all`：读取文件全部内容的辅助函数
+//! 本模块封装了 easy-fs 文件系统的初始化和操作接口。
 //!
-//! 在第八章中，文件描述符表 `fd_table` 属于 `Process`（进程），
-//! 同一进程的所有线程共享同一个 `fd_table`。
+//! ## 核心组件
+//!
+//! - `FS`：全局文件系统实例（延迟初始化），基于 VirtIO 块设备
+//! - `FileSystem`：实现 `FSManager` trait，提供文件的打开、查找、目录列表等操作
+//! - `read_all()`：辅助函数，读取文件的全部内容到内存
+//!
+//! ## 与第五章的区别
+//!
+//! 第五章的程序通过 `APPS` 内存表加载，而本章通过文件系统从磁盘读取。
+//! `exec` 系统调用的实现从 `APPS.get(name)` 变为 `FS.open(name) + read_all()`。
 //!
 //! 教程阅读建议：
 //!
-//! - 先把 `Fd` 当成“线程共享资源的统一句柄”来理解；
-//! - 再看 `Fd::{readable, writable, read, write}`：理解多线程下 I/O 行为复用的边界；
-//! - 最后结合 `ch8/src/main.rs` 的系统调用实现，观察线程与共享 fd_table 的互动。
+//! - 先看 `FS` 的初始化：理解块设备与文件系统是如何绑定的；
+//! - 再看 `open`：理解 CREATE/TRUNC/RDONLY 等标志的行为；
+//! - 最后看 `read_all`：把握“按块读取 -> 拼接 ELF 数据”的加载路径。
 
 use crate::virtio_block::BLOCK_DEVICE;
 use alloc::{string::String, sync::Arc, vec::Vec};
 use spin::Lazy;
-use tg_easy_fs::{
-    EasyFileSystem, FSManager, FileHandle, Inode, OpenFlags, PipeReader, PipeWriter, UserBuffer,
-};
+use tg_easy_fs::{EasyFileSystem, FSManager, FileHandle, Inode, OpenFlags};
 
-/// 全局文件系统实例（延迟初始化）
+/// 全局文件系统实例
+///
+/// 在首次访问时初始化：
+/// 1. 通过 `BLOCK_DEVICE`（VirtIO 块设备）打开 easy-fs 文件系统
+/// 2. 获取根目录 inode
 pub static FS: Lazy<FileSystem> = Lazy::new(|| FileSystem {
     root: EasyFileSystem::root_inode(&EasyFileSystem::open(BLOCK_DEVICE.clone())),
 });
 
-/// easy-fs 文件系统封装
+/// 文件系统管理器
+///
+/// 封装 easy-fs 的根目录 inode，提供文件操作接口。
+/// 当前仅支持**单级目录**（所有文件在根目录下）。
 pub struct FileSystem {
-    /// 根 Inode
+    /// 根目录 inode
     root: Inode,
 }
 
 impl FSManager for FileSystem {
     /// 打开文件
+    ///
+    /// 根据 `OpenFlags` 处理不同的打开模式：
+    /// - `CREATE`：文件存在则清空，不存在则创建
+    /// - `TRUNC`：清空文件内容
+    /// - `RDONLY`/`WRONLY`/`RDWR`：设置读写权限
     fn open(&self, path: &str, flags: OpenFlags) -> Option<Arc<FileHandle>> {
         let (readable, writable) = flags.read_write();
         if flags.contains(OpenFlags::CREATE) {
             if let Some(inode) = self.find(path) {
+                // 文件已存在，清空内容
                 inode.clear();
                 Some(Arc::new(FileHandle::new(readable, writable, inode)))
             } else {
+                // 文件不存在，创建新文件
                 self.root
                     .create(path)
                     .map(|new_inode| Arc::new(FileHandle::new(readable, writable, new_inode)))
@@ -55,21 +72,31 @@ impl FSManager for FileSystem {
         }
     }
 
-    /// 查找文件
+    /// 在根目录中查找文件
     fn find(&self, path: &str) -> Option<Arc<Inode>> {
         self.root.find(path)
     }
 
-    /// 列出目录
+    /// 列出根目录下所有文件名
     fn readdir(&self, _path: &str) -> Option<alloc::vec::Vec<String>> {
         Some(self.root.readdir())
     }
 
-    fn link(&self, _src: &str, _dst: &str) -> isize { unimplemented!() }
-    fn unlink(&self, _path: &str) -> isize { unimplemented!() }
+    /// 创建硬链接
+    fn link(&self, _src: &str, _dst: &str) -> isize {
+        unimplemented!()
+    }
+
+    /// 删除硬链接
+    fn unlink(&self, _path: &str) -> isize {
+        unimplemented!()
+    }
 }
 
-/// 读取文件全部内容到 Vec<u8>
+/// 读取文件的全部内容到 Vec<u8>
+///
+/// 通过文件句柄的 inode，从偏移 0 开始逐块读取，
+/// 直到读取长度为 0（表示文件结束）。
 pub fn read_all(fd: Arc<FileHandle>) -> Vec<u8> {
     let mut offset = 0usize;
     let mut buffer = [0u8; 512];
@@ -77,71 +104,12 @@ pub fn read_all(fd: Arc<FileHandle>) -> Vec<u8> {
     if let Some(inode) = &fd.inode {
         loop {
             let len = inode.read_at(offset, &mut buffer);
-            if len == 0 { break; }
+            if len == 0 {
+                break;
+            }
             offset += len;
             v.extend_from_slice(&buffer[..len]);
         }
     }
     v
-}
-
-/// 统一的文件描述符类型
-///
-/// 将普通文件、管道读端、管道写端和空描述符统一为一个枚举，
-/// 简化 `fd_table` 中的类型管理。
-#[derive(Clone)]
-pub enum Fd {
-    /// 普通文件（来自 easy-fs）
-    File(FileHandle),
-    /// 管道读端（只读）
-    PipeRead(PipeReader),
-    /// 管道写端（只写）
-    PipeWrite(Arc<PipeWriter>),
-    /// 空描述符（用于 stdin/stdout/stderr）
-    Empty {
-        /// 是否可读
-        read: bool,
-        /// 是否可写
-        write: bool,
-    },
-}
-
-impl Fd {
-    /// 该描述符是否可读
-    pub fn readable(&self) -> bool {
-        match self {
-            Fd::File(f) => f.readable(),
-            Fd::PipeRead(_) => true,
-            Fd::PipeWrite(_) => false,
-            Fd::Empty { read, .. } => *read,
-        }
-    }
-
-    /// 该描述符是否可写
-    pub fn writable(&self) -> bool {
-        match self {
-            Fd::File(f) => f.writable(),
-            Fd::PipeRead(_) => false,
-            Fd::PipeWrite(_) => true,
-            Fd::Empty { write, .. } => *write,
-        }
-    }
-
-    /// 从描述符读取数据
-    pub fn read(&self, buf: UserBuffer) -> isize {
-        match self {
-            Fd::File(f) => f.read(buf),
-            Fd::PipeRead(p) => p.read(buf),
-            _ => -1,
-        }
-    }
-
-    /// 向描述符写入数据
-    pub fn write(&self, buf: UserBuffer) -> isize {
-        match self {
-            Fd::File(f) => f.write(buf),
-            Fd::PipeWrite(p) => p.write(buf),
-            _ => -1,
-        }
-    }
 }

@@ -1,96 +1,67 @@
 //! VirtIO 块设备驱动模块
 //!
-//! 通过 MMIO 方式访问 QEMU virt 平台的 VirtIO 块设备，
-//! 实现 `BlockDevice` trait 以供 easy-fs 使用。
+//! 本模块实现了 VirtIO 块设备驱动，连接 QEMU 的虚拟块设备与 easy-fs 文件系统。
 //!
-//! 本模块与第六/七章相同。
+//! ## 架构
+//!
+//! ```text
+//! easy-fs 文件系统
+//!       │
+//!       ▼
+//! BlockDevice trait（read_block / write_block）
+//!       │
+//!       ▼
+//! VirtIOBlock（本模块实现）
+//!       │
+//!       ▼
+//! virtio-drivers 库（VirtIOBlk）
+//!       │
+//!       ▼
+//! QEMU VirtIO MMIO 设备（0x10001000）
+//!       │
+//!       ▼
+//! fs.img 磁盘镜像文件
+//! ```
+//!
+//! ## VirtioHal
+//!
+//! `virtio-drivers` 库需要一个 `Hal` 实现来处理 DMA 内存分配和地址转换。
+//! 由于内核使用恒等映射，物理地址 == 虚拟地址，因此转换非常简单。
 //!
 //! 教程阅读建议：
 //!
-//! - 本文件在三章里保持稳定，目的是让你把注意力集中到并发语义变化；
-//! - 建议重点复盘 `virt_to_phys`：它是“驱动可在分页内核中工作”的关键桥接点。
+//! - 先看 `BLOCK_DEVICE`：理解驱动实例如何被文件系统全局复用；
+//! - 再看 `BlockDevice` trait 实现：理解文件系统读写如何下沉到块设备；
+//! - 最后看 `VirtioHal`：理解 DMA 分配与地址转换为何能“近似直通”。
 
-use crate::{build_flags, Sv39, KERNEL_SPACE};
-use alloc::{
-    alloc::{alloc_zeroed, dealloc},
-    sync::Arc,
-};
-use core::{alloc::Layout, ptr::NonNull};
-use spin::{Lazy, Mutex};
+use alloc::sync::Arc;
+use spin::Lazy;
 use tg_easy_fs::BlockDevice;
-use tg_kernel_vm::page_table::{MmuMeta, VAddr, VmFlags};
-use virtio_drivers::{Hal, MmioTransport, VirtIOBlk, VirtIOHeader};
-
-/// VirtIO 设备 MMIO 基地址
-const VIRTIO0: usize = 0x10001000;
 
 /// 全局块设备实例（延迟初始化）
+///
+/// 从 DeviceManager 中获取由 driver crate 发现的 BlockDevice。
 pub static BLOCK_DEVICE: Lazy<Arc<dyn BlockDevice>> = Lazy::new(|| {
-    Arc::new(unsafe {
-        VirtIOBlock(Mutex::new(
-            VirtIOBlk::new(
-                MmioTransport::new(NonNull::new(VIRTIO0 as *mut VirtIOHeader).unwrap())
-                    .expect("Error when creating MmioTransport"),
-            )
-            .expect("Error when creating VirtIOBlk"),
-        ))
-    })
+    let block = crate::device::DEVICES
+        .get()
+        .expect("DEVICES must be initialized")
+        .get_block()
+        .expect("Block device not found");
+    Arc::new(TgBlockDevice(block))
 });
 
-/// VirtIO 块设备封装
-struct VirtIOBlock(Mutex<VirtIOBlk<VirtioHal, MmioTransport>>);
+/// easy-fs BlockDevice 接口到 tg_driver::BlockDevice 的适配层
+struct TgBlockDevice(Arc<dyn tg_driver::BlockDevice>);
 
-// Safety: 内部使用 Mutex 保护，确保线程安全
-unsafe impl Send for VirtIOBlock {}
-unsafe impl Sync for VirtIOBlock {}
-
-impl BlockDevice for VirtIOBlock {
+impl BlockDevice for TgBlockDevice {
+    /// 读取一个磁盘块（512 字节）
     fn read_block(&self, block_id: usize, buf: &mut [u8]) {
-        self.0.lock().read_block(block_id, buf)
-            .expect("Error when reading VirtIOBlk");
+        self.0.read_block(block_id, buf);
     }
+    /// 写入一个磁盘块（512 字节）
     fn write_block(&self, block_id: usize, buf: &[u8]) {
-        self.0.lock().write_block(block_id, buf)
-            .expect("Error when writing VirtIOBlk");
+        self.0.write_block(block_id, buf);
     }
 }
 
-/// VirtIO HAL（硬件抽象层）实现
-struct VirtioHal;
 
-impl Hal for VirtioHal {
-    /// DMA 内存分配
-    fn dma_alloc(pages: usize) -> usize {
-        unsafe {
-            alloc_zeroed(Layout::from_size_align_unchecked(
-                pages << Sv39::PAGE_BITS, 1 << Sv39::PAGE_BITS,
-            )) as _
-        }
-    }
-
-    /// DMA 内存释放
-    fn dma_dealloc(paddr: usize, pages: usize) -> i32 {
-        unsafe {
-            dealloc(
-                paddr as _,
-                Layout::from_size_align_unchecked(pages << Sv39::PAGE_BITS, 1 << Sv39::PAGE_BITS),
-            )
-        }
-        0
-    }
-
-    /// 物理地址转虚拟地址（恒等映射）
-    fn phys_to_virt(paddr: usize) -> usize { paddr }
-
-    /// 虚拟地址转物理地址
-    fn virt_to_phys(vaddr: usize) -> usize {
-        const VALID: VmFlags<Sv39> = build_flags("__V");
-        let ptr: NonNull<u8> = unsafe {
-            KERNEL_SPACE
-                .assume_init_ref()
-                .translate(VAddr::new(vaddr), VALID)
-                .unwrap()
-        };
-        ptr.as_ptr() as usize
-    }
-}

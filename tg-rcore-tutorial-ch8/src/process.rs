@@ -1,262 +1,127 @@
-//! 进程与线程管理模块
+//! 进程管理模块
 //!
-//! ## 与第七章的区别
+//! 与第五章相比，本章的 `Process` 新增了**文件描述符表**（`fd_table`）字段，
+//! 每个进程拥有自己的 fd_table，统一管理标准 I/O 和磁盘文件。
 //!
-//! 第七章中 `Process` 既是资源容器又是执行单元。
-//! 第八章将两者分离：
-//! - **Process**：资源容器，管理地址空间、文件描述符、**同步原语列表**、信号
-//! - **Thread**：执行单元，管理 TID 和上下文
+//! ## 文件描述符表
 //!
-//! 同一进程的所有线程共享 `Process` 中的资源。
-//!
-//! ## 新增字段
-//!
-//! | 字段 | 说明 |
-//! |------|------|
-//! | `semaphore_list` | 信号量列表（进程内所有线程共享） |
-//! | `mutex_list` | 互斥锁列表 |
-//! | `condvar_list` | 条件变量列表 |
+//! | fd | 用途 |
+//! |----|------|
+//! | 0 | 标准输入（stdin） |
+//! | 1 | 标准输出（stdout） |
+//! | 2 | 标准错误（stderr） |
+//! | 3+ | 普通文件（通过 open 系统调用分配） |
 //!
 //! 教程阅读建议：
 //!
-//! - 先看 `Process` 与 `Thread` 的字段分工：明确“资源归进程、执行归线程”；
-//! - 再看 `fork/exec/from_elf`：理解跨线程模型后，进程复制与替换语义如何变化；
-//! - 最后结合 `processor.rs` 看线程生命周期与进程资源回收的关系。
+//! - 先看 `from_elf`：理解用户地址空间与初始 fd_table 如何构建；
+//! - 再看 `fork`：观察地址空间和文件描述符的继承规则；
+//! - 最后看 `change_program_brk`：理解用户堆扩缩时的页映射变化。
 
-use crate::{
-    build_flags, fs::Fd, map_portal, parse_flags, processor::ProcessorInner, Sv39, Sv39Manager,
-    PROCESSOR,
-};
-use alloc::{alloc::alloc_zeroed, boxed::Box, sync::Arc, vec::Vec};
+use crate::{Sv39, Sv39Manager, build_flags, file::{DiskFile, File}, map_portal, parse_flags};
+use alloc::{alloc::alloc_zeroed, sync::Arc, vec::Vec};
 use core::alloc::Layout;
 use spin::Mutex;
+use tg_easy_fs::{FileHandle};
 use tg_kernel_context::{foreign::ForeignContext, LocalContext};
 use tg_kernel_vm::{
-    page_table::{MmuMeta, VAddr, PPN, VPN},
-    AddressSpace,
+    AddressSpace, MapVisibility, page_table::{MmuMeta, PPN, VAddr, VPN}
 };
-use tg_signal::Signal;
-use tg_signal_impl::SignalImpl;
-use tg_sync::{Condvar, Mutex as MutexTrait, Semaphore};
-use tg_task_manage::{ProcId, ThreadId};
+use tg_task_manage::ProcId;
 use xmas_elf::{
     header::{self, HeaderPt2, Machine},
     program, ElfFile,
 };
 
-/// 线程（执行单元）
+/// 进程结构体
 ///
-/// 每个线程有独立的 TID 和上下文（寄存器状态、satp）。
-/// 同一进程的多个线程共享地址空间。
-pub struct Thread {
-    /// 线程 ID（不可变）
-    pub tid: ThreadId,
-    /// 执行上下文（包含 LocalContext + satp）
-    pub context: ForeignContext,
-}
-
-impl Thread {
-    /// 创建新线程
-    pub fn new(satp: usize, context: LocalContext) -> Self {
-        Self {
-            tid: ThreadId::new(),
-            context: ForeignContext { context, satp },
-        }
-    }
-}
-
-use alloc::collections::BTreeMap;
-
-#[derive(Clone)]
-pub struct ResourceTracker {
-    pub available: Vec<usize>,
-    pub allocation: BTreeMap<ThreadId, Vec<usize>>,
-    pub need: BTreeMap<ThreadId, Vec<usize>>,
-}
-
-impl ResourceTracker {
-    pub fn new() -> Self {
-        Self {
-            available: Vec::new(),
-            allocation: BTreeMap::new(),
-            need: BTreeMap::new(),
-        }
-    }
-
-    pub fn add_resource(&mut self, id: usize, capacity: usize) {
-        if id >= self.available.len() {
-            self.available.resize(id + 1, 0);
-        }
-        self.available[id] = capacity;
-        for alloc in self.allocation.values_mut() {
-            if alloc.len() <= id { alloc.resize(id + 1, 0); }
-            alloc[id] = 0;
-        }
-        for need in self.need.values_mut() {
-            if need.len() <= id { need.resize(id + 1, 0); }
-            need[id] = 0;
-        }
-    }
-
-    pub fn ensure_thread(&mut self, tid: ThreadId) {
-        let m = self.available.len();
-        self.allocation.entry(tid).or_insert_with(|| vec![0; m]).resize(m, 0);
-        self.need.entry(tid).or_insert_with(|| vec![0; m]).resize(m, 0);
-    }
-
-    pub fn check_safe(&mut self, tid: ThreadId, res_id: usize, request: usize) -> bool {
-        self.ensure_thread(tid);
-        self.need.get_mut(&tid).unwrap()[res_id] += request;
-        
-        let mut work = self.available.clone();
-        let mut finish = BTreeMap::new();
-        let all_tids: Vec<ThreadId> = self.allocation.keys().copied().collect();
-        for t in &all_tids {
-            finish.insert(*t, false);
-        }
-
-        let m = self.available.len();
-        loop {
-            let mut found = false;
-            for t in &all_tids {
-                if !finish[t] {
-                    self.ensure_thread(*t);
-                    let need = self.need.get(t).unwrap();
-                    let mut can_allocate = true;
-                    for i in 0..m {
-                        if work.len() <= i { work.push(0); }
-                        if need.len() > i && need[i] > work[i] {
-                            can_allocate = false;
-                            break;
-                        }
-                    }
-                    if can_allocate {
-                        let alloc = self.allocation.get(t).unwrap();
-                        for i in 0..alloc.len() {
-                            if work.len() <= i { work.push(0); }
-                            work[i] += alloc[i];
-                        }
-                        *finish.get_mut(t).unwrap() = true;
-                        found = true;
-                    }
-                }
-            }
-            if !found { break; }
-        }
-
-        let is_safe = finish.values().all(|&f| f);
-        self.need.get_mut(&tid).unwrap()[res_id] -= request;
-        is_safe
-    }
-
-    pub fn allocate(&mut self, tid: ThreadId, res_id: usize, amount: usize) {
-        self.ensure_thread(tid);
-        self.allocation.get_mut(&tid).unwrap()[res_id] += amount;
-        self.available[res_id] -= amount;
-    }
-
-    pub fn deallocate(&mut self, tid: ThreadId, res_id: usize, amount: usize) {
-        self.ensure_thread(tid);
-        self.allocation.get_mut(&tid).unwrap()[res_id] -= amount;
-        self.available[res_id] += amount;
-    }
-
-    pub fn set_need(&mut self, tid: ThreadId, res_id: usize, amount: usize) {
-        self.ensure_thread(tid);
-        self.need.get_mut(&tid).unwrap()[res_id] = amount;
-    }
-}
-
-/// 进程（资源容器）
-///
-/// 管理地址空间、文件描述符、同步原语、信号等共享资源。
-/// 一个进程可以包含多个线程。
+/// 与第五章相比新增了 `fd_table` 字段。
 pub struct Process {
-    /// 进程 ID
+    /// 进程标识符（PID），创建后不可变
     pub pid: ProcId,
-    /// 地址空间（所有线程共享）
+    /// 用户态上下文（含 satp，支持跨地址空间切换）
+    pub context: ForeignContext,
+    /// 进程的独立地址空间
     pub address_space: AddressSpace<Sv39, Sv39Manager>,
-    /// 文件描述符表（所有线程共享）
-    pub fd_table: Vec<Option<Mutex<Fd>>>,
-    /// 信号处理器
-    pub signal: Box<dyn Signal>,
-    /// 信号量列表（**本章新增**，所有线程共享）
-    pub semaphore_list: Vec<Option<Arc<Semaphore>>>,
-    /// 互斥锁列表（**本章新增**，所有线程共享）
-    pub mutex_list: Vec<Option<Arc<dyn MutexTrait>>>,
-    /// 条件变量列表（**本章新增**，所有线程共享）
-    pub condvar_list: Vec<Option<Arc<Condvar>>>,
-    
-    pub is_deadlock_detect: bool,
-    pub mutex_tracker: ResourceTracker,
-    pub sem_tracker: ResourceTracker,
+    /// 文件描述符表
+    ///
+    /// 每个 fd 对应一个 `Option<Mutex<File>>`：
+    /// - `Some(...)`: 有效的文件句柄
+    /// - `None`: 该 fd 已关闭或未使用
+    ///
+    /// 预留 fd 0/1/2 分别为 stdin/stdout/stderr。
+    pub fd_table: Vec<Option<Mutex<Arc<dyn File>>>>,
+    /// 堆底地址
+    pub heap_bottom: usize,
+    /// 当前程序 break 位置（堆顶）
+    pub program_brk: usize,
+    /// Stride value for scheduling
+    pub stride: usize,
+    /// Priority value for scheduling
+    pub priority: usize,
 }
 
 impl Process {
-    /// exec：替换当前进程的地址空间和主线程上下文
-    ///
-    /// 注意：只支持单线程进程执行 exec
+    /// exec：用新程序替换当前进程（保留 PID 和 fd_table）
     pub fn exec(&mut self, elf: ElfFile) {
-        let (proc, thread) = Process::from_elf(elf).unwrap();
+        let proc = Process::from_elf(elf).unwrap();
         self.address_space = proc.address_space;
-        let processor: *mut ProcessorInner = PROCESSOR.get_mut() as *mut ProcessorInner;
-        unsafe {
-            let pthreads = (*processor).get_thread(self.pid).unwrap();
-            (*processor).get_task(pthreads[0]).unwrap().context = thread.context;
-        }
+        self.context = proc.context;
+        self.heap_bottom = proc.heap_bottom;
+        self.program_brk = proc.program_brk;
     }
 
-    /// fork：创建子进程（复制地址空间和主线程上下文）
+    /// fork：复制当前进程创建子进程
     ///
-    /// 子进程继承父进程的地址空间（深拷贝）、文件描述符和信号配置。
-    /// 同步原语列表不继承（子进程创建空的列表）。
-    pub fn fork(&mut self) -> Option<(Self, Thread)> {
+    /// 深拷贝地址空间和文件描述符表。
+    /// 子进程继承父进程的所有已打开文件。
+    pub fn fork(&mut self) -> Option<Process> {
         let pid = ProcId::new();
-        // 深拷贝地址空间
+        // 复制父进程的完整地址空间
         let parent_addr_space = &self.address_space;
         let mut address_space: AddressSpace<Sv39, Sv39Manager> = AddressSpace::new();
         parent_addr_space.cloneself(&mut address_space);
         map_portal(&address_space);
-        // 复制主线程上下文
-        let processor: *mut ProcessorInner = PROCESSOR.get_mut() as *mut ProcessorInner;
-        let pthreads = unsafe { (*processor).get_thread(self.pid).unwrap() };
-        let context = unsafe {
-            (*processor).get_task(pthreads[0]).unwrap().context.context.clone()
-        };
+        // 复制父进程上下文
+        let context = self.context.context.clone();
         let satp = (8 << 60) | address_space.root_ppn().val();
-        let thread = Thread::new(satp, context);
-        // 复制文件描述符表
-        let new_fd_table: Vec<Option<Mutex<Fd>>> = self.fd_table
-            .iter()
-            .map(|fd| fd.as_ref().map(|f| Mutex::new(f.lock().clone())))
-            .collect();
-        Some((
-            Self {
-                pid,
-                address_space,
-                fd_table: new_fd_table,
-                signal: self.signal.from_fork(),
-                // 子进程的同步原语列表初始为空
-                semaphore_list: Vec::new(),
-                mutex_list: Vec::new(),
-                condvar_list: Vec::new(),
-                is_deadlock_detect: self.is_deadlock_detect,
-                mutex_tracker: ResourceTracker::new(),
-                sem_tracker: ResourceTracker::new(),
-            },
-            thread,
-        ))
+        let foreign_ctx = ForeignContext { context, satp };
+        // 复制父进程的文件描述符表
+        // 子进程继承父进程所有已打开的文件
+        let mut new_fd_table: Vec<Option<Mutex<Arc<dyn File>>>> = Vec::new();
+        for fd in self.fd_table.iter_mut() {
+            if let Some(file) = fd {
+                new_fd_table.push(Some(Mutex::new(file.get_mut().clone())));
+            } else {
+                new_fd_table.push(None);
+            }
+        }
+        Some(Self {
+            pid,
+            context: foreign_ctx,
+            address_space,
+            fd_table: new_fd_table,
+            heap_bottom: self.heap_bottom,
+            program_brk: self.program_brk,
+            stride: 0,
+            priority: self.priority,
+        })
     }
 
-    /// 从 ELF 文件创建进程和主线程
+    /// 从 ELF 文件创建新进程
     ///
-    /// 解析 ELF 段，建立地址空间，分配用户栈，创建初始上下文。
-    pub fn from_elf(elf: ElfFile) -> Option<(Self, Thread)> {
+    /// 与第五章相同的 ELF 解析流程，但新增了文件描述符表的初始化：
+    /// - fd 0 = stdin（可读）
+    /// - fd 1 = stdout（可写）
+    /// - fd 2 = stderr（可写）
+    pub fn from_elf(elf: ElfFile) -> Option<Self> {
         let entry = match elf.header.pt2 {
             HeaderPt2::Header64(pt2)
                 if pt2.type_.as_type() == header::Type::Executable
                     && pt2.machine.as_machine() == Machine::RISC_V =>
-            { pt2.entry_point as usize }
+            {
+                pt2.entry_point as usize
+            }
             _ => None?,
         };
 
@@ -264,62 +129,106 @@ impl Process {
         const PAGE_MASK: usize = PAGE_SIZE - 1;
 
         let mut address_space = AddressSpace::new();
+        let mut max_end_va: usize = 0;
+        // 遍历 ELF LOAD 段，映射到地址空间
         for program in elf.program_iter() {
-            if !matches!(program.get_type(), Ok(program::Type::Load)) { continue; }
+            if !matches!(program.get_type(), Ok(program::Type::Load)) {
+                continue;
+            }
+
             let off_file = program.offset() as usize;
             let len_file = program.file_size() as usize;
             let off_mem = program.virtual_addr() as usize;
             let end_mem = off_mem + program.mem_size() as usize;
             assert_eq!(off_file & PAGE_MASK, off_mem & PAGE_MASK);
+
+            if end_mem > max_end_va {
+                max_end_va = end_mem;
+            }
+
             let mut flags: [u8; 5] = *b"U___V";
-            if program.flags().is_execute() { flags[1] = b'X'; }
-            if program.flags().is_write() { flags[2] = b'W'; }
-            if program.flags().is_read() { flags[3] = b'R'; }
+            if program.flags().is_execute() {
+                flags[1] = b'X';
+            }
+            if program.flags().is_write() {
+                flags[2] = b'W';
+            }
+            if program.flags().is_read() {
+                flags[3] = b'R';
+            }
             address_space.map(
                 VAddr::new(off_mem).floor()..VAddr::new(end_mem).ceil(),
                 &elf.input[off_file..][..len_file],
                 off_mem & PAGE_MASK,
                 parse_flags(unsafe { core::str::from_utf8_unchecked(&flags) }).unwrap(),
+                MapVisibility::PRIVATE,
             );
         }
-        // 分配 2 页用户栈
+
+        // 堆底从 ELF 加载的最高地址的下一页开始
+        let heap_bottom = VAddr::<Sv39>::new(max_end_va).ceil().base().val();
+
+        // 映射用户栈（2 页 = 8 KiB）
         let stack = unsafe {
             alloc_zeroed(Layout::from_size_align_unchecked(
-                2 << Sv39::PAGE_BITS, 1 << Sv39::PAGE_BITS,
+                2 << Sv39::PAGE_BITS,
+                1 << Sv39::PAGE_BITS,
             ))
         };
         address_space.map_extern(
             VPN::new((1 << 26) - 2)..VPN::new(1 << 26),
             PPN::new(stack as usize >> Sv39::PAGE_BITS),
             build_flags("U_WRV"),
+            MapVisibility::PRIVATE,
         );
+        // 映射异界传送门
         map_portal(&address_space);
-        let satp = (8 << 60) | address_space.root_ppn().val();
-        let mut context = LocalContext::user(entry);
-        *context.sp_mut() = 1 << 38;
-        let thread = Thread::new(satp, context);
 
-        Some((
-            Self {
-                pid: ProcId::new(),
-                address_space,
-                fd_table: vec![
-                    // stdin
-                    Some(Mutex::new(Fd::Empty { read: true, write: false })),
-                    // stdout
-                    Some(Mutex::new(Fd::Empty { read: false, write: true })),
-                    // stderr
-                    Some(Mutex::new(Fd::Empty { read: false, write: true })),
-                ],
-                signal: Box::new(SignalImpl::new()),
-                semaphore_list: Vec::new(),
-                mutex_list: Vec::new(),
-                condvar_list: Vec::new(),
-                is_deadlock_detect: false,
-                mutex_tracker: ResourceTracker::new(),
-                sem_tracker: ResourceTracker::new(),
-            },
-            thread,
-        ))
+        // 创建用户态上下文
+        let mut context = LocalContext::user(entry);
+        let satp = (8 << 60) | address_space.root_ppn().val();
+        *context.sp_mut() = 1 << 38;
+        Some(Self {
+            pid: ProcId::new(),
+            context: ForeignContext { context, satp },
+            address_space,
+            // 初始化文件描述符表：预留 stdin(0)、stdout(1)、stderr(2)
+            fd_table: vec![
+                Some(Mutex::new(Arc::new(DiskFile::new(Arc::new(FileHandle::empty(true, false)))))),  // fd 0: stdin（可读）
+                Some(Mutex::new(Arc::new(DiskFile::new(Arc::new(FileHandle::empty(false, true)))))),  // fd 1: stdout（可写）
+                Some(Mutex::new(Arc::new(DiskFile::new(Arc::new(FileHandle::empty(false, true)))))),  // fd 2: stderr（可写）
+            ],
+            heap_bottom,
+            program_brk: heap_bottom,
+            stride: 0,
+            priority: 16,
+        })
+    }
+
+    /// 修改程序 break 位置（实现 sbrk 系统调用）
+    pub fn change_program_brk(&mut self, size: isize) -> Option<usize> {
+        let old_brk = self.program_brk;
+        let new_brk = self.program_brk as isize + size;
+        if new_brk < self.heap_bottom as isize {
+            return None;
+        }
+        let new_brk = new_brk as usize;
+
+        let old_brk_ceil = VAddr::<Sv39>::new(old_brk).ceil();
+        let new_brk_ceil = VAddr::<Sv39>::new(new_brk).ceil();
+
+        if size > 0 {
+            if new_brk_ceil.val() > old_brk_ceil.val() {
+                self.address_space
+                    .map(old_brk_ceil..new_brk_ceil, &[], 0, build_flags("U_WRV"), MapVisibility::PRIVATE);
+            }
+        } else if size < 0 {
+            if old_brk_ceil.val() > new_brk_ceil.val() {
+                self.address_space.unmap(new_brk_ceil..old_brk_ceil);
+            }
+        }
+
+        self.program_brk = new_brk;
+        Some(old_brk)
     }
 }
