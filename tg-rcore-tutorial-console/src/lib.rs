@@ -12,8 +12,32 @@
 use core::{
     fmt::{self, Write},
     str::FromStr,
+    sync::atomic::{AtomicBool, Ordering},
 };
 use spin::Once;
+
+#[doc(hidden)]
+pub static PRINT_LOCK: AtomicBool = AtomicBool::new(false);
+
+#[doc(hidden)]
+pub struct PrintGuard;
+
+impl PrintGuard {
+    #[inline]
+    pub fn lock() -> Self {
+        while PRINT_LOCK.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed).is_err() {
+            core::hint::spin_loop();
+        }
+        PrintGuard
+    }
+}
+
+impl Drop for PrintGuard {
+    #[inline]
+    fn drop(&mut self) {
+        PRINT_LOCK.store(false, Ordering::Release);
+    }
+}
 
 /// 向用户提供 `log`。
 pub extern crate log;
@@ -151,9 +175,10 @@ pub fn _print(args: fmt::Arguments) {
 /// 格式化打印。
 #[macro_export]
 macro_rules! print {
-    ($($arg:tt)*) => {
+    ($($arg:tt)*) => {{
+        let _guard = $crate::PrintGuard::lock();
         $crate::_print(core::format_args!($($arg)*));
-    }
+    }}
 }
 
 /// 格式化打印并换行。
@@ -161,8 +186,9 @@ macro_rules! print {
 macro_rules! println {
     () => ($crate::print!("\n"));
     ($($arg:tt)*) => {{
+        let _guard = $crate::PrintGuard::lock();
         $crate::_print(core::format_args!($($arg)*));
-        $crate::println!();
+        $crate::_print(core::format_args!("\n"));
     }}
 }
 
