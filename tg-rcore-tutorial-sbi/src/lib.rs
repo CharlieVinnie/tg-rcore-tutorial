@@ -47,9 +47,33 @@
 // M-Mode SBI 实现（用于 -bios none 启动）
 #[cfg(all(feature = "nobios", target_arch = "riscv64"))]
 pub mod msbi;
-// M-Mode SBI 入口点（用于 -bios none 启动）
 #[cfg(all(feature = "nobios", target_arch = "riscv64"))]
-core::arch::global_asm!(include_str!("m_entry.asm"));
+const fn parse_env_smp(s: &str) -> usize {
+    let bytes = s.as_bytes();
+    let mut num = 0;
+    let mut i = 0;
+    while i < bytes.len() {
+        num = num * 10 + (bytes[i] - b'0') as usize;
+        i += 1;
+    }
+    num
+}
+
+#[cfg(all(feature = "nobios", target_arch = "riscv64"))]
+const MAX_HARTS: usize = match core::option_env!("SMP") {
+    Some(s) => parse_env_smp(s),
+    None => 1,
+};
+
+#[cfg(all(feature = "nobios", target_arch = "riscv64"))]
+const M_STACK_SIZE: usize = 4096 * 4;
+
+#[cfg(all(feature = "nobios", target_arch = "riscv64"))]
+core::arch::global_asm!(
+    include_str!("m_entry.asm"),
+    max_harts = const MAX_HARTS,
+    m_stack_size = const M_STACK_SIZE,
+);
 
 // Legacy SBI 调用号（用于兼容性）
 const SBI_CONSOLE_PUTCHAR: usize = 1;

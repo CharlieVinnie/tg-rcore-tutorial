@@ -10,6 +10,7 @@
 //! 只覆盖 ch1~ch8 需要的 SBI 功能，不追求完整 SBI 规范实现。
 
 use core::arch::asm;
+use core::sync::atomic::{AtomicBool, Ordering};
 
 const UART_BASE: usize = 0x1000_0000;
 // 说明：该地址是 QEMU virt 机器常用 UART MMIO 基址。
@@ -116,21 +117,33 @@ impl SbiRet {
     }
 }
 
+static CONSOLE_LOCK: AtomicBool = AtomicBool::new(false);
+
 /// 处理 Legacy 控制台 putchar（EID 0x01）。
 fn handle_console_putchar(c: usize) -> SbiRet {
+    while CONSOLE_LOCK.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed).is_err() {
+        core::hint::spin_loop();
+    }
     uart::putchar(c as u8);
+    CONSOLE_LOCK.store(false, Ordering::Release);
     SbiRet::success(0)
 }
 
 /// 处理 Legacy 控制台 getchar（EID 0x02）。
 fn handle_console_getchar() -> SbiRet {
     // 简化实现：忙等直到收到字符。
-    // 教学场景下这样实现最直接，但在真实系统中可能需要更细粒度的阻塞/唤醒机制。
+    // 在多核场景下，我们仅在读取 UART 寄存器时获取锁，避免长时间持有阻碍其他核输出。
     loop {
-        if let Some(c) = uart::getchar() {
+        while CONSOLE_LOCK.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed).is_err() {
+            core::hint::spin_loop();
+        }
+        let res = uart::getchar();
+        CONSOLE_LOCK.store(false, Ordering::Release);
+        
+        if let Some(c) = res {
             return SbiRet::success(c as usize);
         } else {
-            continue;
+            core::hint::spin_loop();
         }
     }
 }

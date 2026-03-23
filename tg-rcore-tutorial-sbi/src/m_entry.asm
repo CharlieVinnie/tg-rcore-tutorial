@@ -4,8 +4,16 @@
     .section .text.m_entry
     .globl _m_start
 _m_start:
-    # 1) 初始化 M 态栈
+    # 1) 检查 mhartid，并初始化 M 态栈
+    csrr t0, mhartid
+    li t1, {max_harts}
+    bge t0, t1, _m_start_die # 超过支持的最大核数，直接挂起
+
+    li t1, {m_stack_size}
+    mul t0, t0, t1
     la sp, m_stack_top
+    sub sp, sp, t0
+
     # 将 M 态栈顶保存到 mscratch，后续陷阱处理时用于切换栈
     csrw mscratch, sp
 
@@ -41,8 +49,15 @@ _m_start:
     li t0, -1
     csrw mcounteren, t0
 
-    # 8) mret 切到 S 态，开始执行章节内核入口
+    # 8) s-mode 参数：a0 设置为 hartid
+    csrr a0, mhartid
+
+    # 9) mret 切到 S 态，开始执行章节内核入口
     mret
+
+_m_start_die:
+    wfi
+    j _m_start_die
 
     .section .text.m_trap
     .globl m_trap_vector
@@ -97,8 +112,8 @@ m_trap_vector:
     .section .bss.m_stack
     .globl m_stack_lower_bound
 m_stack_lower_bound:
-    # M 态专用栈（16 KiB）
-    .space 4096 * 4
+    # M 态专用栈，每个核分配 m_stack_size
+    .space {m_stack_size} * {max_harts}
     .globl m_stack_top
 m_stack_top:
 
