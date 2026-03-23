@@ -1,0 +1,7 @@
+[package]
+name = "tg-rcore-tutorial-framework"
+version = "0.4.5"
+edition = "2024"
+
+[dependencies]
+tg-sbi = { package = "tg-rcore-tutorial-sbi", path = "../tg-rcore-tutorial-sbi", version = "0.4.5", features = ["nobios"] }
