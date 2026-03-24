@@ -16,3 +16,5 @@ categories = ["no-std", "embedded", "memory-management"]
 log = "0.4"
 customizable-buddy = "0.0.3"
 page-table = "0.0.6"
+
+tg-sync = { package = "tg-rcore-tutorial-sync", path = "../tg-rcore-tutorial-sync" }
