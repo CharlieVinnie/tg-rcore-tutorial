@@ -51,7 +51,13 @@ pub struct Process {
     pub program_brk: usize,
     /// 系统调用次数统计
     pub syscall_counts: [u32; 500],
+    /// 进程 ID
+    pub pid: usize,
 }
+
+unsafe impl Send for Process {}
+
+static PID_ALLOCATOR: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(1);
 
 impl Process {
     /// 从 ELF 文件创建新进程。
@@ -147,12 +153,14 @@ impl Process {
         let satp = (8 << 60) | address_space.root_ppn().val();
         // 用户栈顶指针（虚拟地址）
         *context.sp_mut() = 1 << 38;
+        let pid = PID_ALLOCATOR.fetch_add(1, core::sync::atomic::Ordering::SeqCst);
         Some(Self {
             context: ForeignContext { context, satp },
             address_space,
             heap_bottom,
             program_brk: heap_bottom,
             syscall_counts: [0; 500],
+            pid,
         })
     }
 

@@ -33,6 +33,7 @@ mod process;
 // 引入控制台输出宏（print! / println!），由 tg_console 库提供
 #[macro_use]
 extern crate tg_console;
+extern crate tg_framework;
 
 // 启用 alloc crate，提供堆分配能力（Vec、Box 等）
 extern crate alloc;
@@ -44,7 +45,7 @@ use crate::{
     process::Process,
 };
 use alloc::{alloc::alloc, vec::Vec};
-use core::{alloc::Layout, cell::UnsafeCell};
+use core::{alloc::Layout, sync::atomic::{AtomicUsize, Ordering}};
 use impls::Console;
 use riscv::register::*;
 // 非 RISC-V64 使用占位 Sv39 类型
@@ -52,7 +53,7 @@ use riscv::register::*;
 use stub::Sv39;
 use tg_console::log;
 // 异界传送门：解决跨地址空间上下文切换的核心组件
-use tg_kernel_context::{foreign::MultislotPortal, LocalContext};
+use tg_kernel_context::{LocalContext, foreign::{MultislotPortal}};
 // RISC-V64 使用真正的 Sv39 类型
 #[cfg(target_arch = "riscv64")]
 use tg_kernel_vm::page_table::Sv39;
@@ -63,6 +64,7 @@ use tg_kernel_vm::{
 use tg_sbi;
 use tg_syscall::Caller;
 use xmas_elf::ElfFile;
+use tg_sync::SpinNoIrq;
 
 // ========== 辅助函数 ==========
 
@@ -90,28 +92,6 @@ use stub::{build_flags, parse_flags};
 #[cfg(target_arch = "riscv64")]
 core::arch::global_asm!(include_str!(env!("APP_ASM")));
 
-// 定义内核入口点：分配 24 KiB 内核栈。
-//
-// 这里不再调用 tg_linker::boot0! 宏，避免外部已发布版本与 Rust 2024
-// 在属性语义上的兼容差异影响本 crate 的发布校验。
-#[cfg(target_arch = "riscv64")]
-#[unsafe(naked)]
-#[unsafe(no_mangle)]
-#[unsafe(link_section = ".text.entry")]
-unsafe extern "C" fn _start() -> ! {
-    const STACK_SIZE: usize = 6 * 4096;
-    #[unsafe(link_section = ".boot.stack")]
-    static mut STACK: [u8; STACK_SIZE] = [0u8; STACK_SIZE];
-
-    core::arch::naked_asm!(
-        "la sp, {stack} + {stack_size}",
-        "j  {main}",
-        stack = sym STACK,
-        stack_size = const STACK_SIZE,
-        main = sym rust_main,
-    )
-}
-
 // 物理内存容量 = 24 MiB（QEMU virt 平台的 RAM 大小）
 const MEMORY: usize = 24 << 20;
 
@@ -122,23 +102,9 @@ const PROTAL_TRANSIT: VPN<Sv39> = VPN::MAX;
 
 // ========== 进程列表 ==========
 
-/// 全局进程列表（用 UnsafeCell 包装以允许内部可变性）。
-struct ProcessList(UnsafeCell<Vec<Process>>);
-
-unsafe impl Sync for ProcessList {}
-
-impl ProcessList {
-    const fn new() -> Self {
-        Self(UnsafeCell::new(Vec::new()))
-    }
-
-    unsafe fn get_mut(&self) -> &mut Vec<Process> {
-        unsafe { &mut *self.0.get() }
-    }
-}
-
-/// 全局进程列表实例。
-static PROCESSES: ProcessList = ProcessList::new();
+/// 全局进程列表。
+static PROCESSES: SpinNoIrq<Vec<Process>> = SpinNoIrq::new(Vec::new());
+static ACTIVE_TASKS: AtomicUsize = AtomicUsize::new(0);
 
 // ========== 内核主函数 ==========
 
@@ -150,7 +116,8 @@ static PROCESSES: ProcessList = ProcessList::new();
 /// 3. 建立内核地址空间（Sv39 页表）
 /// 4. 为每个用户程序解析 ELF 并创建独立地址空间
 /// 5. 建立调度线程执行用户进程
-extern "C" fn rust_main() -> ! {
+#[unsafe(no_mangle)]
+pub extern "C" fn rust_main_prelude() {
     let layout = tg_linker::KernelLayout::locate();
     // 第一步：清零 BSS 段
     unsafe { layout.zero_bss() };
@@ -167,31 +134,43 @@ extern "C" fn rust_main() -> ! {
             MEMORY - layout.len(),
         ))
     };
-    // 第四步：分配异界传送门的物理页面
-    // 传送门大小需要适配 1 个 slot（对应 1 个并发切换）
-    let portal_size = MultislotPortal::calculate_size(1);
-    let portal_layout = Layout::from_size_align(portal_size, 1 << Sv39::PAGE_BITS).unwrap();
-    let portal_ptr = unsafe { alloc(portal_layout) };
-    assert!(portal_layout.size() < 1 << Sv39::PAGE_BITS);
-    // 第五步：建立内核地址空间（恒等映射 + 传送门映射）
-    let mut ks = kernel_space(layout, MEMORY, portal_ptr as _);
-    let portal_idx = PROTAL_TRANSIT.index_in(Sv39::MAX_LEVEL);
-    // 第六步：加载用户程序
-    // 解析每个 ELF 文件，创建独立地址空间，映射传送门
+
+    // 第四步：解析所有的 app
+    let mut tasks = 0;
     for (i, elf) in tg_linker::AppMeta::locate().iter().enumerate() {
         let base = elf.as_ptr() as usize;
         log::info!("detect app[{i}]: {base:#x}..{:#x}", base + elf.len());
         if let Some(process) = Process::new(ElfFile::new(elf).unwrap()) {
-            // 将内核传送门页表项共享到用户地址空间
-            // 这样传送门在两个地址空间的虚拟地址相同
-            process.address_space.root()[portal_idx] = ks.root()[portal_idx];
-            unsafe { PROCESSES.get_mut().push(process) };
+            PROCESSES.lock().push(process);
+            tasks += 1;
         }
     }
+    ACTIVE_TASKS.store(tasks, Ordering::Release);
+}
 
-    // 第七步：建立调度栈（映射到内核地址空间的高地址区域）
+/// 多核环境下的每核心初始化与执行主函数。
+#[unsafe(no_mangle)]
+pub extern "C" fn rust_main_execute(hartid: usize) {
+    unsafe { core::arch::asm!("mv tp, {}", in(reg) hartid) };
+    let layout = tg_linker::KernelLayout::locate();
+
+    log::info!("Hello from hart {}!", hartid);
+    
+    // 每个核心单独分配一个 1-slot 大小的 Portal 物理内存框架。
+    let portal_size = MultislotPortal::calculate_size(1);
+    let portal_layout = Layout::from_size_align(portal_size, 1 << Sv39::PAGE_BITS).unwrap();
+    let portal_ptr = unsafe { alloc(portal_layout) };
+    assert!(portal_size <= 1 << Sv39::PAGE_BITS);
+    
+    // 将物理地址直接初始化为 Portal
+    unsafe { MultislotPortal::init_transit(portal_ptr as usize, 1) };
+    
+    // 独立建立每个核心的 Kernel Space，并传入刚才分配的物理内存地址。
+    let mut ks = kernel_space(layout, MEMORY, portal_ptr as usize);
+    
+    // 每核独立分配一个映射到相同 Virtual Address 的 scheduling 栈
     const PAGE: Layout =
-        unsafe { Layout::from_size_align_unchecked(8 << Sv39::PAGE_BITS, 1 << Sv39::PAGE_BITS) };
+    unsafe { Layout::from_size_align_unchecked(8 << Sv39::PAGE_BITS, 1 << Sv39::PAGE_BITS) };
     let pages = 8;
     let stack = unsafe { alloc(PAGE) };
     ks.map_extern(
@@ -199,12 +178,18 @@ extern "C" fn rust_main() -> ! {
         PPN::new(stack as usize >> Sv39::PAGE_BITS),
         build_flags("_WRV"),
     );
-    // 第八步：建立调度线程
-    // 调度线程在独立的异常域运行，内核异常不会导致整个系统崩溃
-    let mut scheduling = LocalContext::thread(schedule as *const () as _, false);
+    
+    // 建立调度线程
+    let mut scheduling = LocalContext::thread(schedule_entry as *const () as _, false);
+    
+    // a0=hartid, a1=ks (pointer)
+    *scheduling.a_mut(0) = hartid;
+    *scheduling.a_mut(1) = &mut ks as *mut _ as usize;
     *scheduling.sp_mut() = 1 << 38;
+    *scheduling.x_mut(4) = hartid; // tp
+    
     unsafe { scheduling.execute() };
-    // 如果从 execute() 返回，说明调度线程发生了异常
+
     log::error!("stval = {:#x}", stval::read());
     panic!("trap from scheduling thread: {:?}", scause::read().cause());
 }
@@ -218,11 +203,12 @@ extern "C" fn rust_main() -> ! {
 /// 2. 取出第一个进程，通过传送门切换到其地址空间并执行
 /// 3. Trap 返回后处理系统调用或异常
 /// 4. 进程退出后从列表中移除，继续下一个
-extern "C" fn schedule() -> ! {
-    // 初始化异界传送门（设置传送门页面的虚拟地址和 slot 数量）
-    let portal = unsafe { MultislotPortal::init_transit(PROTAL_TRANSIT.base().val(), 1) };
-    // 初始化系统调用处理
-    // 比第三章多了 memory（mmap/munmap/sbrk）
+extern "C" fn schedule_entry(hartid: usize, ks_ptr: usize) -> ! {
+    let ks = unsafe { &mut *(ks_ptr as *mut AddressSpace<Sv39, Sv39Manager>) };
+    // portal 强行转化为已初始化好的传送门。由于在 kernel_space 里已经正确分配了，
+    // 我们在这里可以通过虚地址 PROTAL_TRANSIT 访问这个结构的实例。
+    let portal = unsafe { &mut *(PROTAL_TRANSIT.base().as_mut_ptr() as *mut MultislotPortal) };
+    
     tg_syscall::init_io(&SyscallContext);
     tg_syscall::init_process(&SyscallContext);
     tg_syscall::init_scheduling(&SyscallContext);
@@ -230,74 +216,108 @@ extern "C" fn schedule() -> ! {
     tg_syscall::init_trace(&SyscallContext);
     tg_syscall::init_memory(&SyscallContext);
 
-    // 调度循环：持续执行直到所有进程完成
-    while !unsafe { PROCESSES.get_mut().is_empty() } {
-        let ctx = unsafe { &mut PROCESSES.get_mut()[0].context };
-        // 通过传送门执行用户进程：
-        // 1. 跳转到传送门页面
-        // 2. 在传送门内切换 satp 到用户地址空间
-        // 3. 恢复用户寄存器，执行 sret 进入 U-mode
-        // 4. 用户触发 Trap 后，传送门切换回内核地址空间
-        unsafe { ctx.execute(portal, ()) };
+    let portal_idx = PROTAL_TRANSIT.index_in(Sv39::MAX_LEVEL);
 
-        // 处理 Trap
+    loop {
+        let mut process = {
+            if let Some(p) = PROCESSES.lock().pop() {
+                p
+            } else {
+                if ACTIVE_TASKS.load(Ordering::Acquire) == 0 {
+                    break;
+                }
+                continue;
+            }
+        };
+
+        // 将本核心独有的 portal PTE 写入即将运行的任务！
+        process.address_space.root()[portal_idx] = ks.root()[portal_idx];
+
+
+        // Slot 永远是 0，因为每个核心的 Portal 都是 size = 1
+        unsafe { process.context.execute(portal, 0_usize) };
+
+        // Handle Trap
         match scause::read().cause() {
-            // ─── 系统调用 ───
             scause::Trap::Exception(scause::Exception::UserEnvCall) => {
                 use tg_syscall::{SyscallId as Id, SyscallResult as Ret};
 
-                let ctx = &mut ctx.context;
-                let id: Id = ctx.a(7).into();
-                let args = [ctx.a(0), ctx.a(1), ctx.a(2), ctx.a(3), ctx.a(4), ctx.a(5)];
+                let id: Id = process.context.context.a(7).into();
+                let args = [
+                    process.context.context.a(0),
+                    process.context.context.a(1),
+                    process.context.context.a(2),
+                    process.context.context.a(3),
+                    process.context.context.a(4),
+                    process.context.context.a(5),
+                ];
 
-                // 统计系统调用次数
-                let id_usize = ctx.a(7);
+                let id_usize = process.context.context.a(7);
                 if id_usize < 500 {
-                    unsafe { PROCESSES.get_mut()[0].syscall_counts[id_usize] += 1 };
+                    process.syscall_counts[id_usize] += 1;
                 }
 
-                match tg_syscall::handle(Caller { entity: 0, flow: 0 }, id, args) {
+                let process_ptr = &mut process as *mut crate::process::Process as usize;
+                match tg_syscall::handle(Caller { entity: process_ptr, flow: 0 }, id, args) {
                     Ret::Done(ret) => match id {
-                        // exit：移除进程
-                        Id::EXIT => unsafe {
-                            PROCESSES.get_mut().remove(0);
+                        Id::EXIT => {
+                            ACTIVE_TASKS.fetch_sub(1, Ordering::Release);
+                            drop(process);
                         },
-                        // 其他系统调用：写回返回值，sepc += 4
+                        Id::SCHED_YIELD => {
+                            *process.context.context.a_mut(0) = ret as _;
+                            process.context.context.move_next();
+                            PROCESSES.lock().push(process);
+                        },
                         _ => {
-                            *ctx.a_mut(0) = ret as _;
-                            ctx.move_next();
+                            *process.context.context.a_mut(0) = ret as _;
+                            process.context.context.move_next();
+                            PROCESSES.lock().push(process);
                         }
                     },
-                    // 不支持的系统调用：杀死进程
                     Ret::Unsupported(_) => {
                         log::info!("id = {id:?}");
-                        unsafe { PROCESSES.get_mut().remove(0) };
+                        ACTIVE_TASKS.fetch_sub(1, Ordering::Release);
+                        drop(process);
                     }
                 }
             }
-            // ─── 其他异常/中断：杀死进程 ───
             e => {
                 log::error!(
-                    "unsupported trap: {e:?}, stval = {:#x}, sepc = {:#x}",
-                    stval::read(),
-                    ctx.context.pc()
+                    "unsupported trap from pid {}: {:?}, stval = {:#x}, sepc = {:#x}",
+                    process.pid, e, stval::read(), process.context.context.pc()
                 );
-                unsafe { PROCESSES.get_mut().remove(0) };
+                ACTIVE_TASKS.fetch_sub(1, Ordering::Release);
+                drop(process);
             }
         }
     }
-    // 所有进程执行完毕，关机
-    tg_sbi::shutdown(false)
+    
+    log::info!("I am done!");
+
+    // 该核心不再持有任何任务即完成任务
+    tg_framework::FINISH_BARRIER.fetch_add(1, Ordering::SeqCst);
+    if hartid == 0 {
+        while tg_framework::FINISH_BARRIER.load(Ordering::SeqCst) < 4 { // MAX_HARTS = 4
+            core::hint::spin_loop();
+        }
+        tg_sbi::shutdown(false);
+    } else {
+        loop {
+            #[cfg(target_arch = "riscv64")]
+            unsafe { core::arch::asm!("wfi") };
+        }
+    }
+}
+
+/// 多核环境下的系统安全关机处理函数。
+#[unsafe(no_mangle)]
+pub extern "C" fn rust_main_epilogue() -> ! {
+    tg_sbi::shutdown(false);
 }
 
 // ========== panic 处理 ==========
 
-/// panic 处理函数：打印错误信息后以异常状态关机。
-#[panic_handler]
-fn panic(info: &core::panic::PanicInfo) -> ! {
-    log::error!("{info}");
-    tg_sbi::shutdown(true)
-}
 
 // ========== 内核地址空间构建 ==========
 
@@ -353,6 +373,7 @@ fn kernel_space(
     println!();
     // 激活内核地址空间：写入 satp 寄存器，开启 Sv39 分页模式
     unsafe { satp::set(satp::Mode::Sv39, 0, space.root_ppn().val()) };
+    unsafe { core::arch::asm!("sfence.vma") };
     space
 }
 
@@ -363,7 +384,7 @@ fn kernel_space(
 /// 与前几章不同，本章的系统调用实现需要进行**地址翻译**：
 /// 用户传入的指针是虚拟地址，内核需要通过页表将其翻译为物理地址才能访问。
 mod impls {
-    use crate::{build_flags, Sv39, PROCESSES};
+    use crate::{build_flags, Sv39};
     use alloc::alloc::alloc_zeroed;
     use core::{alloc::Layout, ptr::NonNull};
     use tg_console::log;
@@ -372,6 +393,7 @@ mod impls {
         PageManager,
     };
     use tg_syscall::*;
+    use crate::process::Process;
 
     /// Sv39 页表管理器：负责物理页的分配和映射。
     #[repr(transparent)]
@@ -456,6 +478,13 @@ mod impls {
         fn put_char(&self, c: u8) {
             tg_sbi::console_putchar(c);
         }
+        
+        #[inline]
+        fn put_str(&self, s: &str) {
+            for c in s.bytes() {
+                tg_sbi::console_putchar(c);
+            }
+        }
     }
 
     /// 系统调用上下文实现
@@ -469,13 +498,12 @@ mod impls {
         fn write(&self, caller: Caller, fd: usize, buf: usize, count: usize) -> isize {
             match fd {
                 STDOUT | STDDEBUG => {
-                    // 检查用户地址是否可读
+                    // 检查用户地址是否可写
                     const READABLE: VmFlags<Sv39> = build_flags("RV");
-                    if let Some(ptr) = unsafe { PROCESSES.get_mut() }
-                        .get_mut(caller.entity)
-                        .unwrap()
-                        .address_space
-                        .translate::<u8>(VAddr::new(buf), READABLE)
+                    let process = unsafe { &mut *(caller.entity as *mut Process) };
+                    if let Some(ptr) = process
+                            .address_space
+                            .translate::<u8>(VAddr::new(buf), READABLE)
                     {
                         print!("{}", unsafe {
                             core::str::from_utf8_unchecked(core::slice::from_raw_parts(
@@ -498,7 +526,7 @@ mod impls {
     }
 
     /// Process 系统调用实现
-    impl Process for SyscallContext {
+    impl tg_syscall::Process for SyscallContext {
         #[inline]
         fn exit(&self, _caller: Caller, _status: usize) -> isize {
             0
@@ -509,12 +537,9 @@ mod impls {
         /// 这是本章新增的系统调用，允许用户程序动态扩展/收缩堆内存。
         /// 返回旧的 break 地址，失败返回 -1。
         fn sbrk(&self, caller: Caller, size: i32) -> isize {
-            if let Some(process) = unsafe { PROCESSES.get_mut() }.get_mut(caller.entity) {
-                if let Some(old_brk) = process.change_program_brk(size as isize) {
-                    old_brk as isize
-                } else {
-                    -1
-                }
+            let process = unsafe { &mut *(caller.entity as *mut Process) };
+            if let Some(old_brk) = process.change_program_brk(size as isize) {
+                old_brk as isize
             } else {
                 -1
             }
@@ -540,18 +565,17 @@ mod impls {
             const WRITABLE: VmFlags<Sv39> = build_flags("W_V");
             match clock_id {
                 ClockId::CLOCK_MONOTONIC => {
-                    if let Some(mut ptr) = unsafe { PROCESSES.get_mut() }
-                        .get_mut(caller.entity)
-                        .unwrap()
-                        .address_space
-                        .translate::<TimeSpec>(VAddr::new(tp), WRITABLE)
-                    {
-                        let time = riscv::register::time::read() * 10000 / 125;
-                        *unsafe { ptr.as_mut() } = TimeSpec {
-                            tv_sec: time / 1_000_000_000,
-                            tv_nsec: time % 1_000_000_000,
-                        };
-                        0
+                    let process = unsafe { &mut *(caller.entity as *mut Process) };
+                    if let Some(mut ptr) = process
+                            .address_space
+                            .translate::<TimeSpec>(VAddr::new(tp), WRITABLE)
+                        {
+                            let time = riscv::register::time::read() * 10000 / 125;
+                            *unsafe { ptr.as_mut() } = TimeSpec {
+                                tv_sec: time / 1_000_000_000,
+                                tv_nsec: time % 1_000_000_000,
+                            };
+                            0
                     } else {
                         log::error!("ptr not readable");
                         -1
@@ -577,14 +601,11 @@ mod impls {
             id: usize,
             data: usize,
         ) -> isize {
+            let process = unsafe { &mut *(caller.entity as *mut Process) };
             match trace_request {
                 0 => {
                     const READABLE: VmFlags<Sv39> = build_flags("U_RV");
-                    if let Some(ptr) = unsafe { PROCESSES.get_mut() }
-                        .get_mut(caller.entity)
-                        .unwrap()
-                        .address_space
-                        .translate::<u8>(VAddr::new(id), READABLE) {
+                    if let Some(ptr) = process.address_space.translate::<u8>(VAddr::new(id), READABLE) {
                         unsafe { ptr.read_volatile() as isize }
                     } else {
                         -1
@@ -592,11 +613,7 @@ mod impls {
                 }
                 1 => {
                     const WRITABLE: VmFlags<Sv39> = build_flags("U_WRV");
-                    if let Some(ptr) = unsafe { PROCESSES.get_mut() }
-                        .get_mut(caller.entity)
-                        .unwrap()
-                        .address_space
-                        .translate::<u8>(VAddr::new(id), WRITABLE) {
+                    if let Some(ptr) = process.address_space.translate::<u8>(VAddr::new(id), WRITABLE) {
                         unsafe { ptr.write_volatile((data & 0xff) as u8) };
                         0
                     } else {
@@ -605,7 +622,7 @@ mod impls {
                 }
                 2 => {
                     if id < 500 {
-                        unsafe { PROCESSES.get_mut()[caller.entity].syscall_counts[id] as isize }
+                        process.syscall_counts[id] as isize
                     } else {
                         0
                     }
@@ -658,8 +675,7 @@ mod impls {
             let start = VAddr::<Sv39>::new(addr).floor();
             let end = VAddr::<Sv39>::new(addr + len).ceil();
             
-            let process = unsafe { PROCESSES.get_mut() }.get_mut(caller.entity).unwrap();
-            
+            let process = unsafe { &mut *(caller.entity as *mut Process) };
             // 检查冲突
             let mut conflict = false;
             for area in &process.address_space.areas {
@@ -684,10 +700,7 @@ mod impls {
             let start = VAddr::<Sv39>::new(addr).floor();
             let end = VAddr::<Sv39>::new(addr + len).ceil();
             
-            let process = unsafe { PROCESSES.get_mut() }.get_mut(caller.entity).unwrap();
-            
-            // 检查这个区域是否已经映射？必须完全位于某个已有的 area 内部吗？
-            // 测试用例要求“尝试 unmap 没有映射的内存”返回 -1
+            let process = unsafe { &mut *(caller.entity as *mut Process) };
             let mut mapped = false;
             for area in &process.address_space.areas {
                 if start >= area.start && end <= area.end {

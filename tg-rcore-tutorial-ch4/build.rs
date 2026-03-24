@@ -1,5 +1,10 @@
 use serde::Deserialize;
-use std::{collections::HashMap, env, fs, path::PathBuf, process::Command};
+use std::{
+    collections::HashMap,
+    env, fs,
+    path::{Path, PathBuf},
+    process::Command,
+};
 
 const TARGET_ARCH: &str = "riscv64gc-unknown-none-elf";
 
@@ -21,56 +26,40 @@ fn main() {
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_EXERCISE");
 
     let target_arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
+    let out_dir = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR must be set"));
 
-    // 只在 RISC-V64 架构上使用链接脚本
+    // 只在 RISC-V64 架构上使用链接脚本并构建用户程序
     if target_arch == "riscv64" {
-        write_linker();
-        if should_skip_build_apps() {
-            write_dummy_app_asm();
+        write_linker(&out_dir);
+        
+        // 仅靠环境变量决定是否跳过，不再进行不靠谱的打包目录探测
+        if env::var_os("TG_SKIP_USER_APPS").is_some() {
+            write_dummy_app_asm(&out_dir);
         } else {
-            build_apps();
+            build_apps(&out_dir);
         }
     }
 }
 
-fn should_skip_build_apps() -> bool {
-    if env::var_os("TG_SKIP_USER_APPS").is_some() {
-        return true;
-    }
-
-    is_packaged_build()
-}
-
-fn write_linker() {
-    let ld = PathBuf::from(env::var_os("OUT_DIR").unwrap()).join("linker.ld");
+fn write_linker(out_dir: &Path) {
+    let ld = out_dir.join("linker.ld");
     fs::write(&ld, tg_linker::NOBIOS_SCRIPT).unwrap_or_else(|err| {
         panic!("failed to write linker script to {}: {}", ld.display(), err)
     });
     println!("cargo:rustc-link-arg=-T{}", ld.display());
 }
 
-fn is_packaged_build() -> bool {
-    let out_dir = PathBuf::from(env::var_os("OUT_DIR").unwrap());
-    let out_dir = out_dir.to_string_lossy();
-
-    let manifest_dir = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
-    let manifest_dir = manifest_dir.to_string_lossy();
-
-    out_dir.contains("/target/package/")
-        || out_dir.contains("\\target\\package\\")
-        || manifest_dir.contains("/target/package/")
-        || manifest_dir.contains("\\target\\package\\")
-}
-
-fn build_apps() {
-    let tg_user_root = ensure_tg_user();
+fn build_apps(out_dir: &Path) {
+    let tg_user_root = ensure_tg_user(out_dir);
     let cases_path = tg_user_root.join("cases.toml");
-    println!("cargo:rerun-if-changed={}", cases_path.display());
-    println!(
-        "cargo:rerun-if-changed={}",
-        tg_user_root.join("Cargo.toml").display()
-    );
-    println!("cargo:rerun-if-changed={}", tg_user_root.join("src").display());
+
+    // 只有当使用本地外部目录时才让 Cargo 监听文件变化。
+    // 如果监听 OUT_DIR 内部的文件，部分 Cargo 版本会陷入无限重编译循环。
+    if !tg_user_root.starts_with(out_dir) {
+        println!("cargo:rerun-if-changed={}", cases_path.display());
+        println!("cargo:rerun-if-changed={}", tg_user_root.join("Cargo.toml").display());
+        println!("cargo:rerun-if-changed={}", tg_user_root.join("src").display());
+    }
 
     let cfg = fs::read_to_string(&cases_path).unwrap_or_else(|err| {
         panic!("failed to read cases.toml from {}: {}", cases_path.display(), err)
@@ -84,6 +73,7 @@ fn build_apps() {
     } else {
         "ch4"
     };
+    
     let cases = cases_map.remove(case_key).unwrap_or_default();
     let base = cases.base.unwrap_or(0);
     let step = cases.step.unwrap_or(0);
@@ -99,6 +89,7 @@ fn build_apps() {
     for (i, name) in names.iter().enumerate() {
         let base_address = base + i as u64 * step;
         build_user_app(&tg_user_root, name, base_address);
+        
         let elf = target_dir.join(name);
         let app_path = if base_address != 0 {
             objcopy_to_bin(&elf)
@@ -108,13 +99,12 @@ fn build_apps() {
         bins.push(app_path);
     }
 
-    let out_dir = PathBuf::from(env::var_os("OUT_DIR").unwrap());
     let app_asm = out_dir.join("app.asm");
     write_app_asm(&app_asm, base, step, &bins);
     println!("cargo:rustc-env=APP_ASM={}", app_asm.display());
 }
 
-fn build_user_app(tg_user_root: &PathBuf, name: &str, base_address: u64) {
+fn build_user_app(tg_user_root: &Path, name: &str, base_address: u64) {
     let mut cmd = Command::new("cargo");
     cmd.args([
         "build",
@@ -136,7 +126,7 @@ fn build_user_app(tg_user_root: &PathBuf, name: &str, base_address: u64) {
     }
 }
 
-fn objcopy_to_bin(elf: &PathBuf) -> PathBuf {
+fn objcopy_to_bin(elf: &Path) -> PathBuf {
     let bin = elf.with_extension("bin");
     let status = Command::new("rust-objcopy")
         .args([
@@ -148,13 +138,14 @@ fn objcopy_to_bin(elf: &PathBuf) -> PathBuf {
         ])
         .status()
         .expect("failed to execute rust-objcopy");
+    
     if !status.success() {
         panic!("rust-objcopy failed for {}", elf.display());
     }
     bin
 }
 
-fn write_app_asm(path: &PathBuf, base: u64, step: u64, bins: &[PathBuf]) {
+fn write_app_asm(path: &Path, base: u64, step: u64, bins: &[PathBuf]) {
     use std::io::Write;
     let mut asm = fs::File::create(path)
         .unwrap_or_else(|err| panic!("failed to create {}: {}", path.display(), err));
@@ -179,22 +170,20 @@ apps:
 
     writeln!(asm, "    .quad app_{}_end", bins.len() - 1).unwrap();
 
-    for (i, path) in bins.iter().enumerate() {
+    for (i, bin_path) in bins.iter().enumerate() {
         writeln!(
             asm,
             "\
 app_{i}_start:
-    .incbin {path:?}
+    .incbin {bin_path:?}
 app_{i}_end:",
         )
         .unwrap();
     }
 }
 
-fn write_dummy_app_asm() {
+fn write_dummy_app_asm(out_dir: &Path) {
     use std::io::Write;
-
-    let out_dir = PathBuf::from(env::var_os("OUT_DIR").unwrap());
     let app_asm = out_dir.join("app.asm");
     let mut asm = fs::File::create(&app_asm)
         .unwrap_or_else(|err| panic!("failed to create {}: {}", app_asm.display(), err));
@@ -216,8 +205,8 @@ apps:
     println!("cargo:rustc-env=APP_ASM={}", app_asm.display());
 }
 
-fn ensure_tg_user() -> PathBuf {
-    // 优先使用 TG_USER_DIR 显式指定的目录
+fn ensure_tg_user(out_dir: &Path) -> PathBuf {
+    // 优先使用 TG_USER_DIR 显式指定的本地开发目录
     if let Ok(dir) = env::var("TG_USER_DIR") {
         let path = PathBuf::from(dir);
         if path.join("Cargo.toml").exists() {
@@ -225,24 +214,24 @@ fn ensure_tg_user() -> PathBuf {
         }
     }
 
-    // 从 .cargo/config.toml [env] 读取三个配置项
+    // 从 .cargo/config.toml [env] 读取配置项
     let crate_name = env::var("TG_USER_CRATE")
         .expect("TG_USER_CRATE not set; add it to .cargo/config.toml [env]");
     let local_dir_name = env::var("TG_USER_LOCAL_DIR")
-        .expect("TG_USER_LOCAL_DIR not set; add it to .cargo/config.toml [env]");
+        .unwrap_or_else(|_| crate_name.clone());
     let version = env::var("TG_USER_VERSION")
         .expect("TG_USER_VERSION not set; add it to .cargo/config.toml [env]");
 
-    let manifest_dir = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
-    let tg_user_dir = manifest_dir.join(&local_dir_name);
+    // 将克隆目标更改为 OUT_DIR，不再污染源码树
+    let tg_user_dir = out_dir.join(&local_dir_name);
 
-    // 本地缓存目录已存在则直接使用
+    // 缓存目录已存在则直接使用
     if tg_user_dir.join("Cargo.toml").exists() {
         ensure_workspace_table(&tg_user_dir);
         return tg_user_dir;
     }
 
-    // 从 crates.io 克隆指定包
+    // 从 crates.io 克隆指定包到 OUT_DIR 中
     let crate_spec = format!("{crate_name}@{version}");
     let status = Command::new("cargo")
         .args([
@@ -268,21 +257,17 @@ fn ensure_tg_user() -> PathBuf {
         );
     }
 
-    // 克隆后补加 [workspace]，防止父 workspace 将其识别为非成员而报错
     ensure_workspace_table(&tg_user_dir);
-
     tg_user_dir
 }
 
 /// 若 Cargo.toml 末尾尚无 [workspace] 表，则追加一个空的，
 /// 使该 crate 成为独立 workspace 根，避免父 workspace 冲突。
-fn ensure_workspace_table(dir: &PathBuf) {
+fn ensure_workspace_table(dir: &Path) {
     let cargo_toml = dir.join("Cargo.toml");
     let content = fs::read_to_string(&cargo_toml).unwrap_or_default();
     if !content.contains("[workspace]") {
-        fs::write(&cargo_toml, format!("{}
-[workspace]
-", content))
+        fs::write(&cargo_toml, format!("{}\n[workspace]\n", content))
             .unwrap_or_else(|err| panic!("failed to patch Cargo.toml in {}: {}", dir.display(), err));
     }
 }
