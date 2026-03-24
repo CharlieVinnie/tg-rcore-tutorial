@@ -1,6 +1,6 @@
 #![no_std]
 
-use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicUsize, Ordering};
 use tg_sbi::shutdown;
 
 const fn parse_env_smp(s: &str) -> usize {
@@ -18,11 +18,11 @@ pub const MAX_HARTS: usize = match core::option_env!("SMP") {
     None => 1,
 };
 
-// 栈大小：每个 hart 4 KiB
-pub const STACK_SIZE_PER_HART: usize = 4096;
+// 栈大小：每个 hart 64 KiB
+pub const STACK_SIZE_PER_HART: usize = 16 * 4096;
 pub const STACK_SIZE: usize = STACK_SIZE_PER_HART * MAX_HARTS;
 
-#[unsafe(link_section = ".bss.uninit")]
+#[unsafe(link_section = ".boot.stack")]
 #[used]
 static mut STACK: [u8; STACK_SIZE] = [0u8; STACK_SIZE];
 
@@ -30,7 +30,7 @@ static mut STACK: [u8; STACK_SIZE] = [0u8; STACK_SIZE];
 #[unsafe(naked)]
 #[unsafe(no_mangle)]
 #[unsafe(link_section = ".text.entry")]
-unsafe extern "C" fn _start() -> ! {
+unsafe extern "C" fn _start() {
     core::arch::naked_asm!(
         "li t1, {max_harts}",
         "bge a0, t1, 1f",
@@ -49,25 +49,36 @@ unsafe extern "C" fn _start() -> ! {
     )
 }
 
+#[cfg(target_arch = "riscv64")]
+#[unsafe(naked)]
+#[unsafe(no_mangle)]
+#[unsafe(link_section = ".text.entry")]
+unsafe extern "C" fn secondary_hart_start() {
+    core::arch::naked_asm!(
+        "mv sp, a1",
+        "j {main_secondary}",
+        main_secondary = sym rust_main_secondary,
+    )
+}
+
 unsafe extern "C" {
     fn rust_main_prelude();
     fn rust_main_execute(hartid: usize);
     fn rust_main_epilogue() -> !;
 }
 
-static PRELUDE_FINISHED: AtomicBool = AtomicBool::new(false);
 pub static READY_BARRIER: AtomicUsize = AtomicUsize::new(0);
 pub static FINISH_BARRIER: AtomicUsize = AtomicUsize::new(0);
 
 #[unsafe(no_mangle)]
 extern "C" fn rust_main(hartid: usize) -> ! {
-    if hartid == 0 {
-        unsafe { rust_main_prelude(); }
-        PRELUDE_FINISHED.store(true, Ordering::Release);
-    } else {
-        while !PRELUDE_FINISHED.load(Ordering::Acquire) {
-            core::hint::spin_loop();
-        }
+    // 只有主核心（Hart 0）进入此函数
+    unsafe { rust_main_prelude(); }
+
+    // 唤醒其余从属核心
+    for target_hart in 1..MAX_HARTS {
+        let stack_top = unsafe { (core::ptr::addr_of!(STACK) as *const u8).add(STACK_SIZE - target_hart * STACK_SIZE_PER_HART) as usize };
+        tg_sbi::sbi_hart_start(target_hart, secondary_hart_start as *const () as usize, stack_top);
     }
 
     READY_BARRIER.fetch_add(1, Ordering::SeqCst);
@@ -78,17 +89,26 @@ extern "C" fn rust_main(hartid: usize) -> ! {
     unsafe { rust_main_execute(hartid); }
 
     FINISH_BARRIER.fetch_add(1, Ordering::SeqCst);
+    while FINISH_BARRIER.load(Ordering::SeqCst) < MAX_HARTS {
+        core::hint::spin_loop();
+    }
+    
+    unsafe { rust_main_epilogue(); }
+}
 
-    if hartid == 0 {
-        while FINISH_BARRIER.load(Ordering::SeqCst) < MAX_HARTS {
-            core::hint::spin_loop();
-        }
-        unsafe { rust_main_epilogue(); }
-    } else {
-        loop {
-            #[cfg(target_arch = "riscv64")]
-            unsafe { core::arch::asm!("wfi") }
-        }
+#[unsafe(no_mangle)]
+extern "C" fn rust_main_secondary(hartid: usize) -> ! {
+    READY_BARRIER.fetch_add(1, Ordering::SeqCst);
+    while READY_BARRIER.load(Ordering::SeqCst) < MAX_HARTS {
+        core::hint::spin_loop();
+    }
+
+    unsafe { rust_main_execute(hartid); }
+
+    FINISH_BARRIER.fetch_add(1, Ordering::SeqCst);
+    loop {
+        #[cfg(target_arch = "riscv64")]
+        unsafe { core::arch::asm!("wfi") };
     }
 }
 
