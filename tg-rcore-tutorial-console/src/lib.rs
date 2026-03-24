@@ -65,7 +65,7 @@ pub trait Console: Sync {
 static CONSOLE: Once<&'static dyn Console> = Once::new();
 
 /// 打印缓冲区大小。
-const BUFFER_SIZE: usize = 64;
+const BUFFER_SIZE: usize = 512;
 
 /// 打印缓冲区，用于收集格式化输出后一次性输出，避免抢占导致输出交错。
 ///
@@ -215,6 +215,7 @@ impl log::Log for Logger {
     fn log(&self, record: &log::Record) {
         use log::Level::*;
         // ANSI 颜色仅用于教学调试体验，不影响日志语义。
+        let _guard = PrintGuard::lock();
         let color_code: u8 = match record.level() {
             Error => 31,
             Warn => 93,
@@ -222,11 +223,17 @@ impl log::Log for Logger {
             Debug => 32,
             Trace => 90,
         };
-        println!(
-            "\x1b[{color_code}m[{:>5}] {}\x1b[0m",
+        let hartid: usize;
+        #[cfg(target_arch = "riscv64")]
+        unsafe { core::arch::asm!("mv {}, tp", out(reg) hartid) };
+        #[cfg(not(target_arch = "riscv64"))]
+        { hartid = 0; }
+        _print(core::format_args!(
+            "\x1b[90m{{Hart {}}}\x1b[0m\x1b[{color_code}m [{:>5}] {}\x1b[0m\n",
+            hartid,
             record.level(),
             record.args(),
-        );
+        ));
     }
 
     fn flush(&self) {}
