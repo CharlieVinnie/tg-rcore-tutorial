@@ -12,6 +12,7 @@ mod condvar;
 mod mutex;
 mod semaphore;
 mod up;
+mod spin_no_irq;
 
 extern crate alloc;
 
@@ -19,3 +20,4 @@ pub use condvar::Condvar;
 pub use mutex::{Mutex, MutexBlocking};
 pub use semaphore::Semaphore;
 pub use up::{UPIntrFreeCell, UPIntrRefMut};
+pub use spin_no_irq::{SpinNoIrq, SpinNoIrqGuard};

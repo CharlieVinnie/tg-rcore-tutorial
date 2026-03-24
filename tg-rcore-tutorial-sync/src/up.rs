@@ -51,10 +51,11 @@ impl<T> UPSafeCellRaw<T> {
     ///
     /// 调用者必须确保此类型仅在单处理器环境下使用，
     /// 且不会在持有可变引用时发生重入。
-    pub unsafe fn new(value: T) -> Self {
-        Self {
-            inner: UnsafeCell::new(value),
-        }
+    pub unsafe fn new(_value: T) -> Self {
+        unimplemented!()
+        // Self {
+        //     inner: UnsafeCell::new(value),
+        // }
     }
 
     /// 获取内部值的可变引用。
@@ -136,10 +137,11 @@ impl<T> UPIntrFreeCell<T> {
     /// # Safety
     ///
     /// 调用者必须确保此类型仅在单处理器环境下使用。
-    pub unsafe fn new(value: T) -> Self {
-        Self {
-            inner: RefCell::new(value),
-        }
+    pub unsafe fn new(_value: T) -> Self {
+        unimplemented!()
+        // Self {
+        //     inner: RefCell::new(value),
+        // }
     }
 
     /// Panic if the data has been borrowed.
