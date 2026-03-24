@@ -83,6 +83,8 @@ const SBI_CONSOLE_GETCHAR: usize = 2;
 const SBI_EXT_TIMER: usize = 0x54494D45;
 const SBI_EXT_SRST: usize = 0x53525354;
 
+const SBI_HART_START: usize = 0x48534D;
+
 /// SBI `ecall` 的寄存器约定（RISC-V）：
 ///
 /// - `x10(a0)`~`x12(a2)`：参数
@@ -182,4 +184,9 @@ pub fn shutdown(failure: bool) -> ! {
         sbi_call(SBI_EXT_SRST, 0, 0, 0, 0);
     }
     panic!("It should shutdown!");
+}
+
+/// 唤醒目标核心并在指定的物理地址启动（SBI HSM 扩展）。
+pub fn sbi_hart_start(hartid: usize, start_addr: usize, opaque: usize) {
+    sbi_call(SBI_HART_START, 0, hartid, start_addr, opaque);
 }

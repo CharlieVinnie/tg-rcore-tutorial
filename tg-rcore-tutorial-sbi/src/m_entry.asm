@@ -29,10 +29,13 @@ _m_start:
     la t0, m_trap_vector
     csrw mtvec, t0
 
-    # 5) 中断/异常委托给 S 态（但“来自 S 态的 ecall”不委托）
-    #    这样 S 态内核执行 SBI 调用时，仍会陷入 M 态由本文件处理
+    # 5) 中断委托给 S 态，但保留 MSIP(3) 和 MTIP(7) 在 M 态处理
     li t0, 0xffff
+    li t1, (1 << 3) | (1 << 7)
+    not t1, t1
+    and t0, t0, t1
     csrw mideleg, t0
+
     li t0, 0xffff
     li t1, (1 << 9)     # 异常号 9：Environment call from S-mode
     not t1, t1
@@ -52,9 +55,23 @@ _m_start:
     # 8) s-mode 参数：a0 设置为 hartid
     csrr a0, mhartid
 
-    # 9) mret 切到 S 态，开始执行章节内核入口
+    # 取消：直接 mret
+    # 9) 仅 Hart 0 直接启动 S 态内核，其余核进入等待中断状态
+    bnez a0, _park_hart
     mret
 
+_park_hart:
+    # 1. 允许接收 M 态软件中断 (MSIE = 第 3 位)
+    li t0, (1 << 3)
+    csrs mie, t0
+
+    # 2. 开启全局 M 态中断允许 (MIE = 第 3 位)
+    li t0, (1 << 3)
+    csrs mstatus, t0
+
+1:  wfi
+    j 1b
+    
 _m_start_die:
     wfi
     j _m_start_die
@@ -68,7 +85,7 @@ m_trap_vector:
     csrrw sp, mscratch, sp
     addi sp, sp, -128
 
-    # 保存会被 Rust 处理函数使用/破坏的通用寄存器
+    # 保存将被修改的通用寄存器（构造 MachineTrapFrame）
     sd ra, 0(sp)
     sd t0, 8(sp)
     sd t1, 16(sp)
@@ -82,20 +99,27 @@ m_trap_vector:
     sd a6, 80(sp)
     sd a7, 88(sp)
 
+    # 保存 mepc，供 Rust 进行修改
+    csrr t0, mepc
+    sd t0, 96(sp)
+
+    # a0 传入当前栈指针，作为 &mut MachineTrapFrame 参数
+    mv a0, sp
+
     # 调用 Rust 侧分发函数（msbi.rs::m_trap_handler）
     call m_trap_handler
 
-    # 跳过触发陷阱的 ecall 指令，避免返回后再次陷入
-    csrr t0, mepc
-    addi t0, t0, 4
+    # 恢复 mepc（可能已被 Rust 代码修改）
+    ld t0, 96(sp)
     csrw mepc, t0
 
-    # 恢复寄存器
+    # 恢复所有寄存器（包含被 Rust 修改的返回值 a0, a1）
     ld ra, 0(sp)
     ld t0, 8(sp)
     ld t1, 16(sp)
     ld t2, 24(sp)
-    # 不恢复 a0/a1：它们保存 m_trap_handler 的返回值（SbiRet）
+    ld a0, 32(sp)
+    ld a1, 40(sp)
     ld a2, 48(sp)
     ld a3, 56(sp)
     ld a4, 64(sp)

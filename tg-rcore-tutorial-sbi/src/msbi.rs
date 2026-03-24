@@ -67,6 +67,7 @@ mod eid {
     pub const BASE: usize = 0x10;
     pub const SRST: usize = 0x53525354;
     pub const TIMER: usize = 0x54494D45;
+    pub const HSM: usize = 0x48534D;
 }
 
 /// SBI 功能 ID。
@@ -84,12 +85,17 @@ mod fid {
     pub const SRST_COLD_REBOOT: usize = 1;
     #[allow(dead_code)]
     pub const SRST_WARM_REBOOT: usize = 2;
+
+    // HSM FIDs
+    pub const HSM_HART_START: usize = 0;
 }
 
 /// SBI 错误码。
 mod error {
     pub const SUCCESS: isize = 0;
     pub const ERR_NOT_SUPPORTED: isize = -2;
+    pub const ERR_INVALID_PARAM: isize = -3;
+    pub const ERR_ALREADY_AVAILABLE: isize = -6;
 }
 
 /// SBI 返回值。
@@ -168,6 +174,47 @@ fn handle_timer(time: u64) -> SbiRet {
     SbiRet::success(0)
 }
 
+const CLINT_MSIP_BASE: usize = 0x200_0000;
+struct HartContext {
+    start_addr: usize,
+    opaque: usize,
+    started: bool,
+}
+static mut HART_CONTEXTS: [HartContext; 8] = [
+    HartContext { start_addr: 0, opaque: 0, started: false },
+    HartContext { start_addr: 0, opaque: 0, started: false },
+    HartContext { start_addr: 0, opaque: 0, started: false },
+    HartContext { start_addr: 0, opaque: 0, started: false },
+    HartContext { start_addr: 0, opaque: 0, started: false },
+    HartContext { start_addr: 0, opaque: 0, started: false },
+    HartContext { start_addr: 0, opaque: 0, started: false },
+    HartContext { start_addr: 0, opaque: 0, started: false },
+];
+
+/// 处理 HSM 扩展：启动核心
+fn handle_hsm(fid: usize, target_hart: usize, start_addr: usize, opaque: usize) -> SbiRet {
+    if fid != fid::HSM_HART_START {
+        return SbiRet::not_supported();
+    }
+    unsafe {
+        if target_hart >= 8 {
+            return SbiRet { error: error::ERR_INVALID_PARAM, value: 0 };
+        }
+        let ctx_ptr = core::ptr::addr_of_mut!(HART_CONTEXTS[target_hart]);
+        if (*ctx_ptr).started {
+            return SbiRet { error: error::ERR_ALREADY_AVAILABLE, value: 0 };
+        }
+        (*ctx_ptr).start_addr = start_addr;
+        (*ctx_ptr).opaque = opaque;
+        (*ctx_ptr).started = true;
+        
+        // 触发 IPI 唤醒 target_hart
+        let msip_ptr = (CLINT_MSIP_BASE + target_hart * 4) as *mut u32;
+        msip_ptr.write_volatile(1);
+    }
+    SbiRet::success(0)
+}
+
 /// 处理系统重置请求。
 fn handle_system_reset(fid: usize) -> SbiRet {
     const VIRT_TEST: usize = 0x10_0000;
@@ -209,30 +256,41 @@ fn handle_base(fid: usize) -> SbiRet {
     }
 }
 
+/// M-mode 陷阱发生时的上下文结构。
+/// 用于保存和修改触发 M 态中断/异常时的寄存器状态。
+#[repr(C)]
+pub struct MachineTrapFrame {
+    /// 返回地址 (x1)
+    pub ra: usize,
+    /// 临时寄存器 t0 (x5)
+    pub t0: usize,
+    /// 临时寄存器 t1 (x6)
+    pub t1: usize,
+    /// 临时寄存器 t2 (x7)
+    pub t2: usize,
+    /// 参数/返回值寄存器 a0 (x10)
+    pub a0: usize,
+    /// 参数/返回值寄存器 a1 (x11)
+    pub a1: usize,
+    /// 参数寄存器 a2 (x12)
+    pub a2: usize,
+    /// 参数寄存器 a3 (x13)
+    pub a3: usize,
+    /// 参数寄存器 a4 (x14)
+    pub a4: usize,
+    /// 参数寄存器 a5 (x15)
+    pub a5: usize,
+    /// 参数寄存器 a6 / fid (x16)
+    pub a6: usize,
+    /// 参数寄存器 a7 / eid (x17)
+    pub a7: usize,
+    /// 发生陷阱时的 PC 地址 (mepc)
+    pub mepc: usize,
+}
+
 /// 从汇编调用的主 M-mode 陷阱处理程序。
-///
-/// 此函数处理来自 S-mode 的 ecall，并根据扩展 ID 和功能 ID 分发到相应的处理程序。
-///
-/// 参数来源约定（由 `m_entry.asm` 保存并传入）：
-/// - `a0`：第一个参数（也常作为返回值承载位）
-/// - `fid`：功能号（a6）
-/// - `eid`：扩展号（a7）
-///
-/// # Safety
-///
-/// 此函数使用 `#[unsafe(no_mangle)]` 标记，因为它直接从汇编陷阱向量
-/// （`m_trap_vector`）调用。调用者必须确保寄存器状态符合预期的调用约定。
 #[unsafe(no_mangle)]
-pub fn m_trap_handler(
-    a0: usize,
-    _a1: usize,
-    _a2: usize,
-    _a3: usize,
-    _a4: usize,
-    _a5: usize,
-    fid: usize,
-    eid: usize,
-) -> SbiRet {
+pub extern "C" fn m_trap_handler(frame: &mut MachineTrapFrame) {
     // 只处理 “S-mode ecall”：
     // - 这是 S 态内核调用 SBI 的标准入口
     // - 其余陷阱在本最小实现中统一视为不支持
@@ -243,18 +301,60 @@ pub fn m_trap_handler(
         core::arch::asm!("csrr {}, mcause", out(reg) mcause);
     }
 
-    if mcause != 9 {
-        return SbiRet::not_supported();
+    // 检查是否是机器级软件中断（即 MSIP 触发的 Wakeup IPI）
+    let is_interrupt = (mcause as isize) < 0;
+    let cause_code = mcause & !(1 << 63);
+    if is_interrupt && cause_code == 3 {
+        // 唤醒流程：
+        // 1. 清除 IPI
+        let hartid: usize;
+        unsafe { asm!("csrr {}, mhartid", out(reg) hartid) };
+        unsafe { ((CLINT_MSIP_BASE + hartid * 4) as *mut u32).write_volatile(0) };
+
+        // 2. 配置 S 态寄存器为期望的 start_addr 和 opaque
+        unsafe {
+            let ctx_ptr = core::ptr::addr_of!(HART_CONTEXTS[hartid]);
+            
+            // 设置 S 态的起始地址
+            frame.mepc = (*ctx_ptr).start_addr;
+            
+            // 设置 MPP = 01 (Supervisor) 以确保 mret 返回到 S 态
+            // 必须先清空 11:12，然后再置为 01
+            asm!(
+                "csrc mstatus, {mask}",
+                "csrs mstatus, {mpp}",
+                mask = in(reg) (3 << 11),
+                mpp = in(reg) (1 << 11),
+            );
+
+            // 让目标核心在唤醒时 a0 = hartid, a1 = opaque
+            frame.a0 = hartid;
+            frame.a1 = (*ctx_ptr).opaque;
+        }
     }
 
-    // 根据 EID 分发到对应的 SBI 服务处理函数
-    match eid {
-        eid::CONSOLE_PUTCHAR => handle_console_putchar(a0),
-        eid::CONSOLE_GETCHAR => handle_console_getchar(),
-        eid::TIMER => handle_timer(a0 as u64),
-        eid::SHUTDOWN => handle_system_reset(fid::SRST_SHUTDOWN),
-        eid::BASE => handle_base(fid),
-        eid::SRST => handle_system_reset(fid),
-        _ => SbiRet::not_supported(),
+    // 检查是否是 ecall 从 S 态发起
+    if mcause == 9 {
+        let eid = frame.a7;
+        let fid = frame.a6;
+        let a0_in = frame.a0;
+        let a1_in = frame.a1;
+        let a2_in = frame.a2;
+
+        let ret = match eid {
+            eid::CONSOLE_PUTCHAR => handle_console_putchar(a0_in),
+            eid::CONSOLE_GETCHAR => handle_console_getchar(),
+            eid::TIMER => handle_timer(a0_in as u64),
+            eid::SHUTDOWN => handle_system_reset(fid::SRST_SHUTDOWN),
+            eid::BASE => handle_base(fid),
+            eid::SRST => handle_system_reset(fid),
+            eid::HSM => handle_hsm(fid, a0_in, a1_in, a2_in),
+            _ => SbiRet::not_supported(),
+        };
+
+        frame.a0 = ret.error as usize;
+        frame.a1 = ret.value;
+        frame.mepc += 4;
+        return;
     }
 }
