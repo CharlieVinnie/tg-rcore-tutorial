@@ -21,3 +21,5 @@ panic = "abort"
 [dependencies]
 tg-sbi = { package = "tg-rcore-tutorial-sbi", path = "../tg-rcore-tutorial-sbi", version = "0.4.5", features = ["nobios"] }
 tg-rcore-tutorial-framework = { path = "../tg-rcore-tutorial-framework" }
+tg-console = { package = "tg-rcore-tutorial-console", path = "../tg-rcore-tutorial-console" }
+spin = "0.9"
