@@ -1,7 +1,14 @@
 [package]
-name = "tg-rcore-tutorial-framework"
-version = "0.4.5"
+name = "tg-rcore-tutorial-multi-processor-framework-wzy"
+description = "Framework crate for rCore Tutorial OS with SMP support."
+version = "0.1.0-preview.1"
 edition = "2024"
+authors = ["Ziyan Wang <charliewang.cpp@gmail.com>"]
+repository = "https://github.com/CharlieVinnie/tg-rcore-tutorial"
+homepage = "https://github.com/CharlieVinnie/tg-rcore-tutorial/tree/smp"
+license = "GPL-3.0"
+keywords = ["ai", "ai4ose", "kernel", "learning", "os"]
+categories = ["no-std", "embedded"]
 
 [dependencies]
-tg-sbi = { package = "tg-rcore-tutorial-sbi", path = "../tg-rcore-tutorial-sbi", version = "0.4.5", features = ["nobios"] }
+tg-sbi = { package = "tg-rcore-tutorial-multi-processor-sbi-wzy", version = "0.1.0-preview.1", features = ["nobios"] }
