@@ -1,15 +1,15 @@
 [package]
-name = "tg-rcore-tutorial-ch4-Charlie-exercise"
-description = "Chapter 4 of rCore Tutorial: Address space management with SV39 virtual memory."
+name = "tg-rcore-tutorial-multi-processor-ch4-wzy"
+description = "Chapter 4 of rCore Tutorial: Address space management with SV39 virtual memory, with SMP support."
 version = "0.1.0-preview.1"
 edition = "2024"
-authors = ["YdrMaster <ydrml@hotmail.com>","Yifan Wang<w-yf22@mails.tsinghua.edu.cn>","Yu Chen <yuchen@tsinghua.edu.cn>","Ziyan Wang <charliewang.cpp@gmail.com>"]
-repository = "https://github.com/rcore-os/tg-rcore-tutorial-ch4"
-homepage = "https://github.com/rcore-os/tg-rcore-tutorial-ch4/tree/test"
+authors = ["Ziyan Wang <charliewang.cpp@gmail.com>"]
+repository = "https://github.com/CharlieVinnie/tg-rcore-tutorial"
+homepage = "https://github.com/CharlieVinnie/tg-rcore-tutorial/tree/smp"
 documentation = "https://docs.rs/tg-rcore-tutorial-ch4"
 license = "GPL-3.0"
 readme = "README.md"
-keywords = ["rcore", "tutorial", "no-std", "riscv", "virtual-memory"]
+keywords = ["ai", "ai4ose", "kernel", "learning", "os"]
 categories = ["no-std", "embedded"]
 exclude = [
     "tg-user/**",
@@ -30,15 +30,15 @@ xmas-elf = "0.8.0"
 riscv = "0.10.1"
 spin = "0.9"
 
-tg-sbi = { package = "tg-rcore-tutorial-sbi", path = "../tg-rcore-tutorial-sbi", version = "0.4.5", features = ["nobios"] }
+tg-sbi = { package = "tg-rcore-tutorial-multi-processor-sbi-wzy", version = "0.1.0-preview.1", features = ["nobios"] }
 tg-linker = { package = "tg-rcore-tutorial-linker", path = "../tg-rcore-tutorial-linker", version = "0.4.5" }
-tg-console = { package = "tg-rcore-tutorial-console", path = "../tg-rcore-tutorial-console", version = "0.4.5" }
+tg-console = { package = "tg-rcore-tutorial-multi-processor-console-wzy", version = "0.1.0-preview.1" }
 tg-kernel-context = { package = "tg-rcore-tutorial-kernel-context", path = "../tg-rcore-tutorial-kernel-context", version = "0.4.5", features = ["foreign"] }
-tg-kernel-alloc = { package = "tg-rcore-tutorial-kernel-alloc", path = "../tg-rcore-tutorial-kernel-alloc", version = "0.4.5" }
+tg-kernel-alloc = { package = "tg-rcore-tutorial-multi-processor-kernel-alloc-wzy", version = "0.1.0-preview.1" }
 tg-kernel-vm = { package = "tg-rcore-tutorial-kernel-vm", path = "../tg-rcore-tutorial-kernel-vm", version = "0.4.5" }
 tg-syscall = { package = "tg-rcore-tutorial-syscall", path = "../tg-rcore-tutorial-syscall", version = "0.4.5", features = ["kernel"] }
-tg-sync = { package = "tg-rcore-tutorial-sync", path = "../tg-rcore-tutorial-sync" }
-tg-framework = { package = "tg-rcore-tutorial-framework", path = "../tg-rcore-tutorial-framework" }
+tg-sync = { package = "tg-rcore-tutorial-multi-processor-sync-wzy", version = "0.1.0-preview.1" }
+tg-framework = { package = "tg-rcore-tutorial-multi-processor-framework-wzy", version = "0.1.0-preview.1" }
 
 [build-dependencies]
 tg-linker = { package = "tg-rcore-tutorial-linker", path = "../tg-rcore-tutorial-linker", version = "0.4.5" }
