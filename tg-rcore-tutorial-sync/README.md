@@ -1,3 +1,5 @@
+### This crate is forked from https://crates.io/crates/tg-rcore-tutorial-sync
+
 # tg-rcore-tutorial-sync
 
 Synchronization primitives for the rCore tutorial operating system.
