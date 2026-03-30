@@ -168,6 +168,7 @@ cases = [
     "pipe_large_test",
     "ch8b_usertest",
     "user_shell",
+    "hack_print_empty",
     "initproc",
 ]
 
