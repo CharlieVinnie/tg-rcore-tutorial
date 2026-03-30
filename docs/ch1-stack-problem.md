@@ -1,0 +1,1 @@
+ch1 爆栈的原因：tg-rcore-tutorial-driver/src/input.rs 中一个 VirtIOInputInner 就占了 3KB 的空间，然后 L34~L40 还会将这个 inner 搬来搬去，消耗了更多栈空间，导致爆栈。
